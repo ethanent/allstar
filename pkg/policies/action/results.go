@@ -12,7 +12,6 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-// Package actionuse implements the Action Use security policy.
 package action
 
 import "fmt"
@@ -77,9 +76,9 @@ func (de *denyRuleEvaluationResult) passed() bool {
 func (de *denyRuleEvaluationResult) explain() string {
 	s := ""
 	if de.denied {
-		s = fmt.Sprintf(`Action "%s" version %s hit deny rule "%s":\n`, de.actionMetadata.name, de.actionMetadata.version, de.denyRule)
+		s = fmt.Sprintf("Action \"%s\" version %s hit deny rule \"%s\":\n", de.actionMetadata.name, de.actionMetadata.version, de.denyRule)
 	} else {
-		s = fmt.Sprintf(`Action "%s" version %s did not hit deny rule "%s":\n`, de.actionMetadata.name, de.actionMetadata.version, de.denyRule)
+		s = fmt.Sprintf("Action \"%s\" version %s did not hit deny rule \"%s\":\n", de.actionMetadata.name, de.actionMetadata.version, de.denyRule)
 	}
 	// add step results
 	for _, stepResult := range de.steps {
@@ -92,15 +91,15 @@ func (de *denyRuleEvaluationResult) explain() string {
 func (des *denyRuleEvaluationStepResult) string() string {
 	switch des.status {
 	case denyRuleStepStatusActionVersionMismatch:
-		return fmt.Sprintf(`does not meet version requirement "%s" for %s rule "%s"`, des.ruleVersionConstraint, des.rule.Method, des.rule.Name)
+		return fmt.Sprintf("does not meet version requirement \"%s\" for %s rule \"%s\"", des.ruleVersionConstraint, des.rule.Method, des.rule.Name)
 	case denyRuleStepStatusMissingAction:
-		return fmt.Sprintf(`is not listed in %s rule "%s"`, des.rule.Method, des.rule.Name)
+		return fmt.Sprintf("is not listed in %s rule \"%s\"", des.rule.Method, des.rule.Name)
 	case denyRuleStepStatusAllowed:
-		return fmt.Sprintf(`allowed by %s rule "%s"`, des.rule.Method, des.rule.Name)
+		return fmt.Sprintf("allowed by %s rule \"%s\"", des.rule.Method, des.rule.Name)
 	case denyRuleStepStatusDenied:
-		return fmt.Sprintf(`denied by %s rule "%s"`, des.rule.Method, des.rule.Name)
+		return fmt.Sprintf("denied by %s rule \"%s\"", des.rule.Method, des.rule.Name)
 	case denyRuleStepStatusError:
-		return fmt.Sprintf(`%s rule "%s" experienced an error`, des.rule.Method, des.rule.Name)
+		return fmt.Sprintf("%s rule \"%s\" experienced an error", des.rule.Method, des.rule.Name)
 	default:
 		return "unknown deny eval step result"
 	}
@@ -143,9 +142,9 @@ func (re *requireRuleEvaluationResult) passed() bool {
 func (re *requireRuleEvaluationResult) explain() string {
 	s := ""
 	if !re.satisfied {
-		s = fmt.Sprintf(`Require rule "%s" not satisfied:\n`, re.ruleName)
+		s = fmt.Sprintf("Require rule \"%s\" not satisfied:\n", re.ruleName)
 	} else {
-		s = fmt.Sprintf(`Require rule "%s" satisfied:\n`, re.ruleName)
+		s = fmt.Sprintf("Require rule \"%s\" satisfied:\n", re.ruleName)
 	}
 	s += fmt.Sprintf("-> %d / %d requisites met\n", re.numberSatisfied, re.numberRequired)
 	if re.satisfied {
@@ -161,11 +160,11 @@ func (re *requireRuleEvaluationResult) explain() string {
 func (rf *requireRuleEvaluationFix) string() string {
 	switch rf.fixMethod {
 	case requireRuleEvaluationFixMethodAdd:
-		return fmt.Sprintf(`Add Action "%s" with version satisfying "%s"`, rf.actionName, rf.actionVersionConstraint)
+		return fmt.Sprintf("Add Action \"%s\" with version satisfying \"%s\"", rf.actionName, rf.actionVersionConstraint)
 	case requireRuleEvaluationFixMethodFix:
-		return fmt.Sprintf(`Fix failing Action "%s"`, rf.actionName)
+		return fmt.Sprintf("Fix failing Action \"%s\"", rf.actionName)
 	case requireRuleEvaluationFixMethodUpdate:
-		return fmt.Sprintf(`Update Action "%s" to version satisfying "%s"`, rf.actionName, rf.actionVersionConstraint)
+		return fmt.Sprintf("Update Action \"%s\" to version satisfying \"%s\"", rf.actionName, rf.actionVersionConstraint)
 	default:
 		return "unknown require rule eval fix"
 	}

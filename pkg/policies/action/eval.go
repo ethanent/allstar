@@ -12,7 +12,6 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-// Package actionuse implements the Action Use security policy.
 package action
 
 import (
@@ -81,6 +80,8 @@ func evaluateActionDenied(rules []*Rule, action *actionMetadata, gc globCache, s
 				// this is a denied Action
 				stepResult.status = denyRuleStepStatusDenied
 				stepResult.ruleVersionConstraint = a.Version
+				result.denied = true
+				result.denyRule = r.Name
 				break
 			}
 		default:
@@ -105,19 +106,25 @@ func evaluateRequireRule(ctx context.Context, c *github.Client, owner, repo stri
 	if rule.Method != "require" {
 		return nil, fmt.Errorf("rule is not a require rule")
 	}
+	useCount := len(rule.Actions)
+	if rule.Count != nil {
+		useCount = *rule.Count
+	}
+
 	result := &requireRuleEvaluationResult{
 		satisfied: false,
 
-		numberRequired:  rule.Count,
+		numberRequired:  useCount,
 		numberSatisfied: 0,
 
-		// fixes
+		ruleName: rule.Name,
 	}
 
 	for _, ra := range rule.Actions {
 		// check if this rule is satisfied
 
 		satisfied := false
+		var suggestedFix *requireRuleEvaluationFix
 
 		for _, a := range actions {
 			match, matchName, _, err := ra.match(a, gc, sc)
@@ -127,11 +134,11 @@ func evaluateRequireRule(ctx context.Context, c *github.Client, owner, repo stri
 			if !match {
 				if matchName {
 					// version mismatch
-					result.fixes = append(result.fixes, &requireRuleEvaluationFix{
+					suggestedFix = &requireRuleEvaluationFix{
 						fixMethod:               requireRuleEvaluationFixMethodUpdate,
 						actionName:              a.name,
 						actionVersionConstraint: ra.Version,
-					})
+					}
 					break
 				}
 				// name mismatch, keep looking
@@ -142,12 +149,12 @@ func evaluateRequireRule(ctx context.Context, c *github.Client, owner, repo stri
 
 			if rule.MustPass {
 				passing := false
-				runs, err := listWorkflowRuns(ctx, c, owner, repo, a.workflowFilename)
+				runs, err := listWorkflowRunsByFilename(ctx, c, owner, repo, a.workflowFilename)
 				if err != nil {
 					return nil, err
 				}
 				for _, run := range runs {
-					if run.HeadCommit == nil || run.HeadCommit.SHA == nil || *run.HeadCommit.SHA != headSHA {
+					if run.HeadSHA == nil || *run.HeadSHA != headSHA {
 						// Irrelevant run
 						continue
 					}
@@ -157,11 +164,13 @@ func evaluateRequireRule(ctx context.Context, c *github.Client, owner, repo stri
 				}
 				if !passing {
 					// Not passing. Suggest fix.
-					result.fixes = append(result.fixes, &requireRuleEvaluationFix{
-						fixMethod:               requireRuleEvaluationFixMethodFix,
-						actionName:              a.name,
-						actionVersionConstraint: ra.Version,
-					})
+					if suggestedFix == nil {
+						suggestedFix = &requireRuleEvaluationFix{
+							fixMethod:               requireRuleEvaluationFixMethodFix,
+							actionName:              a.name,
+							actionVersionConstraint: ra.Version,
+						}
+					}
 					break
 				}
 			}
@@ -178,11 +187,15 @@ func evaluateRequireRule(ctx context.Context, c *github.Client, owner, repo stri
 
 		// not passing due to missing Action, add add fix suggestion
 
-		result.fixes = append(result.fixes, &requireRuleEvaluationFix{
-			fixMethod:               requireRuleEvaluationFixMethodAdd,
-			actionName:              ra.Name,
-			actionVersionConstraint: ra.Version,
-		})
+		if suggestedFix == nil {
+			suggestedFix = &requireRuleEvaluationFix{
+				fixMethod:               requireRuleEvaluationFixMethodAdd,
+				actionName:              ra.Name,
+				actionVersionConstraint: ra.Version,
+			}
+		}
+
+		result.fixes = append(result.fixes, suggestedFix)
 	}
 
 	if result.numberSatisfied == result.numberRequired {

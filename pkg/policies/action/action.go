@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-// Package actionuse implements the Action Use security policy.
+// Package actionuse implements the Interactions security policy.
 package action
 
 import (
@@ -30,14 +30,14 @@ import (
 	"github.com/rs/zerolog/log"
 )
 
-const configFile = "action_use.yaml"
-const polName = "Action Use"
+const configFile = "actions.yaml"
+const polName = "GitHub Actions"
 
 const maxWorkflows = 50
 
 var actionNameVersionRegex = regexp.MustCompile(`([a-zA-Z0-9_\-.]+\/[a-zA-Z0-9_\-.]+)@([a-zA-Z0-9.]+)`)
 
-const failText = "This policy, specified at the organization level, sets requirements for Action use by repos within the organization. This repo is failing to fully comply with organization policies, as explained below.\n\n```\n%s\n```"
+const failText = "This policy, specified at the organization level, sets requirements for Action use by repos within the organization. This repo is failing to fully comply with organization policies, as explained below.\n\n```\n%s```\n\nSee the org-level %s policy configuration for details."
 
 // OrgConfig is the org-level config definition for Action Use
 type OrgConfig struct {
@@ -76,7 +76,7 @@ type Rule struct {
 
 	// Count is the number of Actions listed to which a require rule
 	// applies
-	Count int `json:"count"`
+	Count *int `json:"count"`
 
 	// Actions is a set of ActionSelectors.
 	// If nil, all Actions will be selected
@@ -130,14 +130,14 @@ var configIsEnabled func(ctx context.Context, o config.OrgOptConfig, orc, r conf
 
 var listWorkflows func(ctx context.Context, c *github.Client, owner, repo string, on []string) ([]*workflowMetadata, error)
 var repoSelectorMatch func(rs *RepoSelector, ctx context.Context, c *github.Client, owner, repo string, gc globCache, sc semverCache) (bool, error)
-var listWorkflowRuns func(ctx context.Context, c *github.Client, owner, repo string, workflowFilename string) ([]*github.WorkflowRun, error)
+var listWorkflowRunsByFilename func(ctx context.Context, c *github.Client, owner, repo string, workflowFilename string) ([]*github.WorkflowRun, error)
 
 func init() {
 	configFetchConfig = config.FetchConfig
 	configIsEnabled = config.IsEnabled
 	listWorkflows = githubListWorkflows
 	repoSelectorMatch = githubRepoSelectorMatch
-	listWorkflowRuns = githubListWorkflowRuns
+	listWorkflowRunsByFilename = githubListWorkflowRunsByFilename
 }
 
 // Action is the Action Use policy object, implements policydef.Policy.
@@ -329,10 +329,12 @@ func (a Action) Check(ctx context.Context, c *github.Client, owner,
 		}
 	}
 
+	notifyText := fmt.Sprintf(failText, combinedExplain, polName)
+
 	return &policydef.Result{
 		Enabled:    enabled,
 		Pass:       passing,
-		NotifyText: fmt.Sprintf(failText, combinedExplain),
+		NotifyText: notifyText,
 		Details:    details{},
 	}, nil
 }
@@ -358,13 +360,29 @@ func (a Action) GetAction(ctx context.Context, c *github.Client, owner, repo str
 // githubListWorkflows returns workflows for a repo. If on is specified, will
 // filter to workflows with all trigger events listed in on.
 func githubListWorkflows(ctx context.Context, c *github.Client, owner, repo string, on []string) ([]*workflowMetadata, error) {
-	_, workflowDirContents, _, err := c.Repositories.GetContents(ctx, owner, repo, ".github/workflows/", &github.RepositoryContentGetOptions{})
+	_, workflowDirContents, resp, err := c.Repositories.GetContents(ctx, owner, repo, ".github/workflows", &github.RepositoryContentGetOptions{})
 	if err != nil {
+		if resp.StatusCode == 404 {
+			// No workflows dir should yield no workflows
+			return []*workflowMetadata{}, nil
+		}
 		return nil, err
 	}
 	// Limit number of considered workflows to maxWorkflows
 	if len(workflowDirContents) > maxWorkflows {
 		workflowDirContents = workflowDirContents[:maxWorkflows]
+	}
+	// Get content for workflows
+	for _, wff := range workflowDirContents {
+		fc, _, _, err := c.Repositories.GetContents(ctx, owner, repo, wff.GetPath(), &github.RepositoryContentGetOptions{})
+		if err != nil {
+			return nil, err
+		}
+		content, err := fc.GetContent()
+		if err != nil {
+			return nil, err
+		}
+		wff.Content = &content
 	}
 	var workflows []*workflowMetadata
 	for _, wfc := range workflowDirContents {
@@ -397,7 +415,7 @@ func githubListWorkflows(ctx context.Context, c *github.Client, owner, repo stri
 			for _, err := range errs {
 				errors = append(errors, fmt.Errorf("actionlist.Parse error: %w", err))
 			}
-			log.Error().
+			log.Warn().
 				Str("org", owner).
 				Str("repo", repo).
 				Str("area", polName).
@@ -439,8 +457,8 @@ func githubListWorkflows(ctx context.Context, c *github.Client, owner, repo stri
 	return workflows, nil
 }
 
-// githubListWorkflowRuns returns workflow runs for a repo by workflow filename
-func githubListWorkflowRuns(ctx context.Context, c *github.Client, owner, repo string, workflowFilename string) ([]*github.WorkflowRun, error) {
+// githubListWorkflowRunsByFilename returns workflow runs for a repo by workflow filename
+func githubListWorkflowRunsByFilename(ctx context.Context, c *github.Client, owner, repo string, workflowFilename string) ([]*github.WorkflowRun, error) {
 	runs, _, err := c.Actions.ListWorkflowRunsByFileName(ctx, owner, repo, workflowFilename, &github.ListWorkflowRunsOptions{
 		Event: "push",
 	})
@@ -488,12 +506,14 @@ func getConfig(ctx context.Context, c *github.Client, owner, repo string) (*OrgC
 }
 
 func (as *ActionSelector) match(m *actionMetadata, gc globCache, sc semverCache) (match, matchName, matchVersion bool, err error) {
-	nameGlob, err := gc.compileGlob(as.Name)
-	if err != nil {
-		return false, false, false, err
-	}
-	if !nameGlob.Match(m.name) {
-		return false, false, false, nil
+	if as.Name != "" {
+		nameGlob, err := gc.compileGlob(as.Name)
+		if err != nil {
+			return false, false, false, err
+		}
+		if !nameGlob.Match(m.name) {
+			return false, false, false, nil
+		}
 	}
 	if as.Version == "" {
 		return true, true, true, nil
@@ -501,28 +521,35 @@ func (as *ActionSelector) match(m *actionMetadata, gc globCache, sc semverCache)
 	if as.Version == m.version {
 		return true, true, true, nil
 	}
-	constraint, err := sc.compileConstraints(as.Version)
-	if err != nil {
-		// on error, assume this is a ref
-		return false, true, false, nil
-	}
-	version, err := sc.compileVersion(as.Version)
-	if err != nil {
-		return false, true, false, err
-	}
-	if !constraint.Check(version) {
-		return false, true, false, nil
+	if as.Version != "" {
+		constraint, err := sc.compileConstraints(as.Version)
+		if err != nil {
+			// on error, assume this is a ref
+			return false, true, false, nil
+		}
+		version, err := sc.compileVersion(m.version)
+		if err != nil {
+			return false, true, false, err
+		}
+		if !constraint.Check(version) {
+			return false, true, false, nil
+		}
 	}
 	return true, true, true, nil
 }
 
 func githubRepoSelectorMatch(rs *RepoSelector, ctx context.Context, c *github.Client, owner, repo string, gc globCache, sc semverCache) (bool, error) {
-	ng, err := gc.compileGlob(rs.Name)
-	if err != nil {
-		return false, err
+	if rs == nil {
+		return true, nil
 	}
-	if !ng.Match(repo) {
-		return false, nil
+	if rs.Name != "" {
+		ng, err := gc.compileGlob(rs.Name)
+		if err != nil {
+			return false, err
+		}
+		if !ng.Match(repo) {
+			return false, nil
+		}
 	}
 	if rs.Language != nil {
 		langs, _, err := c.Repositories.ListLanguages(ctx, owner, repo)
