@@ -131,6 +131,7 @@ var configIsEnabled func(ctx context.Context, o config.OrgOptConfig, orc, r conf
 var listWorkflows func(ctx context.Context, c *github.Client, owner, repo string, on []string) ([]*workflowMetadata, error)
 var repoSelectorMatch func(rs *RepoSelector, ctx context.Context, c *github.Client, owner, repo string, gc globCache, sc semverCache) (bool, error)
 var listWorkflowRunsByFilename func(ctx context.Context, c *github.Client, owner, repo string, workflowFilename string) ([]*github.WorkflowRun, error)
+var getLatestCommitHash func(ctx context.Context, c *github.Client, owner, repo string) (string, error)
 
 func init() {
 	configFetchConfig = config.FetchConfig
@@ -138,6 +139,7 @@ func init() {
 	listWorkflows = githubListWorkflows
 	repoSelectorMatch = githubRepoSelectorMatch
 	listWorkflowRunsByFilename = githubListWorkflowRunsByFilename
+	getLatestCommitHash = githubGetLatestCommitHash
 }
 
 // Action is the Action Use policy object, implements policydef.Policy.
@@ -287,19 +289,17 @@ func (a Action) Check(ctx context.Context, c *github.Client, owner,
 		if r.Method == "require" {
 			if r.MustPass && wfr == nil {
 				var err error
-				commits, _, err := c.Repositories.ListCommits(ctx, owner, repo, &github.CommitsListOptions{})
+				hash, err := getLatestCommitHash(ctx, c, owner, repo)
 				if err != nil {
 					log.Error().
 						Str("org", owner).
 						Str("repo", repo).
 						Str("area", polName).
 						Err(err).
-						Msg("Error listing commits")
+						Msg("Error getting latest commit hash. Skipping rule evaluation.")
 					break
 				}
-				if len(commits) > 0 && commits[0].SHA != nil {
-					headSHA = *commits[0].SHA
-				}
+				headSHA = hash
 			}
 
 			result, err := evaluateRequireRule(ctx, c, owner, repo, r, actions, headSHA, gc, sc)
@@ -355,6 +355,19 @@ func (a Action) Fix(ctx context.Context, c *github.Client, owner, repo string) e
 func (a Action) GetAction(ctx context.Context, c *github.Client, owner, repo string) string {
 	oc, _, _ := getConfig(ctx, c, owner, repo)
 	return oc.Action
+}
+
+// githubGetLatestCommitHash gets the latest commit hash for a repo's default
+// branch using the GitHub API
+func githubGetLatestCommitHash(ctx context.Context, c *github.Client, owner, repo string) (string, error) {
+	commits, _, err := c.Repositories.ListCommits(ctx, owner, repo, &github.CommitsListOptions{})
+	if err != nil {
+		return "", err
+	}
+	if len(commits) > 0 && commits[0].SHA != nil {
+		return *commits[0].SHA, nil
+	}
+	return "", fmt.Errorf("repo has no commits: %w", err)
 }
 
 // githubListWorkflows returns workflows for a repo. If on is specified, will
