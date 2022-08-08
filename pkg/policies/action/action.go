@@ -38,6 +38,7 @@ const maxWorkflows = 50
 var actionNameVersionRegex = regexp.MustCompile(`([a-zA-Z0-9_\-.]+\/[a-zA-Z0-9_\-.]+)@([a-zA-Z0-9.]+)`)
 
 const failText = "This policy, specified at the organization level, sets requirements for Action use by repos within the organization. This repo is failing to fully comply with organization policies, as explained below.\n\n```\n%s```\n\nSee the org-level %s policy configuration for details."
+const repoSelectorExcludeDepthLimit = 3
 
 // OrgConfig is the org-level config definition for Action Use
 type OrgConfig struct {
@@ -129,7 +130,7 @@ var configFetchConfig func(context.Context, *github.Client, string, string, stri
 var configIsEnabled func(ctx context.Context, o config.OrgOptConfig, orc, r config.RepoOptConfig, c *github.Client, owner, repo string) (bool, error)
 
 var listWorkflows func(ctx context.Context, c *github.Client, owner, repo string, on []string) ([]*workflowMetadata, error)
-var repoSelectorMatch func(rs *RepoSelector, ctx context.Context, c *github.Client, owner, repo string, gc globCache, sc semverCache) (bool, error)
+var repoSelectorMatch func(rs *RepoSelector, ctx context.Context, c *github.Client, owner, repo string, excludeDepth int, gc globCache, sc semverCache) (bool, error)
 var listWorkflowRunsByFilename func(ctx context.Context, c *github.Client, owner, repo string, workflowFilename string) ([]*github.WorkflowRun, error)
 var getLatestCommitHash func(ctx context.Context, c *github.Client, owner, repo string) (string, error)
 
@@ -250,7 +251,7 @@ func (a Action) Check(ctx context.Context, c *github.Client, owner,
 	var applicableRules []*Rule
 
 	for _, r := range oc.Rules {
-		match, err := repoSelectorMatch(r.Repo, ctx, c, owner, repo, gc, sc)
+		match, err := repoSelectorMatch(r.Repo, ctx, c, owner, repo, repoSelectorExcludeDepthLimit, gc, sc)
 		if err != nil {
 			log.Info().
 				Str("org", owner).
@@ -555,7 +556,9 @@ func (as *ActionSelector) match(m *actionMetadata, gc globCache, sc semverCache)
 	return true, true, true, nil
 }
 
-func githubRepoSelectorMatch(rs *RepoSelector, ctx context.Context, c *github.Client, owner, repo string, gc globCache, sc semverCache) (bool, error) {
+// githubRepoSelectorMatch uses GitHub API while matching a repo using a RepoSelector.
+// Set excludeDepth to > 0 for exclusion depth limit, or < 0 for no depth limit.
+func githubRepoSelectorMatch(rs *RepoSelector, ctx context.Context, c *github.Client, owner, repo string, excludeDepth int, gc globCache, sc semverCache) (bool, error) {
 	if rs == nil {
 		return true, nil
 	}
@@ -583,6 +586,19 @@ func githubRepoSelectorMatch(rs *RepoSelector, ctx context.Context, c *github.Cl
 		}
 		if !languageSatisfied {
 			return false, nil
+		}
+	}
+	// Check if covered by exclusion case
+	if excludeDepth != 0 {
+		for _, exc := range rs.Exclude {
+			match, err := githubRepoSelectorMatch(exc, ctx, c, owner, repo, excludeDepth-1, gc, sc)
+			if err != nil {
+				// API error? Ignore exclusion
+				continue
+			}
+			if match {
+				return false, nil
+			}
 		}
 	}
 	return true, nil

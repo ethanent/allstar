@@ -115,6 +115,59 @@ func TestCheck(t *testing.T) {
 			ExpectPass: true,
 		},
 		{
+			Name: "Deny some, repo match",
+			Org: OrgConfig{
+				Action: "issue",
+				Rules: []*Rule{
+					{
+						Name:   "Deny some",
+						Method: "deny",
+						Repo: &RepoSelector{
+							Name: "*",
+						},
+					},
+				},
+			},
+			ConfigEnabled: true,
+			Workflows: map[string]testingWorkflowMetadata{
+				"test.yaml": {
+					File: "basic.yaml",
+				},
+			},
+			ExpectPass:    false,
+			ExpectMessage: []string{"denied by deny rule \"Deny some\""},
+		},
+		{
+			Name: "Deny some, repo no match due to exclusion",
+			Org: OrgConfig{
+				Action: "issue",
+				Rules: []*Rule{
+					{
+						Name:   "Deny some",
+						Method: "deny",
+						Repo: &RepoSelector{
+							Name: "*",
+							Exclude: []*RepoSelector{
+								{
+									Name: "testrepo-h*",
+								},
+							},
+						},
+					},
+				},
+			},
+			ConfigEnabled: true,
+			Workflows: map[string]testingWorkflowMetadata{
+				"test.yaml": {
+					File: "basic.yaml",
+					Repos: []string{
+						"testrepo-hello",
+					},
+				},
+			},
+			ExpectPass: true,
+		},
+		{
 			Name: "Allowlist new versions, new version",
 			Org: OrgConfig{
 				Action: "issue",
@@ -426,13 +479,21 @@ func TestCheck(t *testing.T) {
 
 		// The testing repoSelectorMatch function only matches by name
 		repoSelectorMatch = func(rs *RepoSelector, ctx context.Context, c *github.Client,
-			owner, repo string, gc globCache, sc semverCache) (bool, error) {
+			owner, repo string, excludeDepth int, gc globCache, sc semverCache) (bool, error) {
 			if rs == nil {
 				return true, nil
 			}
 			comp, err := glob.Compile(rs.Name)
 			if err != nil {
 				return false, err
+			}
+			// Apply exclusions
+			if excludeDepth >= 0 || excludeDepth == -1 {
+				for _, exc := range rs.Exclude {
+					if match, _ := repoSelectorMatch(exc, ctx, c, owner, repo, excludeDepth-1, gc, sc); match {
+						return false, nil
+					}
+				}
 			}
 			return comp.Match(repo), nil
 		}
