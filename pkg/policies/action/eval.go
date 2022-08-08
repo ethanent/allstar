@@ -50,6 +50,7 @@ func evaluateActionDenied(rules []*Rule, action *actionMetadata, gc globCache, s
 				if !match {
 					if matchName {
 						stepResult.status = denyRuleStepStatusActionVersionMismatch
+						stepResult.ruleVersionConstraint = a.Version
 						continue
 					}
 					stepResult.status = denyRuleStepStatusMissingAction
@@ -57,11 +58,16 @@ func evaluateActionDenied(rules []*Rule, action *actionMetadata, gc globCache, s
 				}
 				// this is a permissible Action
 				stepResult.status = denyRuleStepStatusAllowed
-				stepResult.ruleVersionConstraint = a.Version
 				break
 			}
 		case "deny":
 			// check if Action is denied
+			if r.Actions == nil {
+				stepResult.status = denyRuleStepStatusDenied
+				result.denied = true
+				result.denyingRule = r
+				break
+			}
 			for _, a := range r.Actions {
 				match, matchName, _, err := a.match(action, gc, sc)
 				if err != nil {
@@ -72,16 +78,16 @@ func evaluateActionDenied(rules []*Rule, action *actionMetadata, gc globCache, s
 				if !match {
 					if matchName {
 						stepResult.status = denyRuleStepStatusActionVersionMismatch
+						stepResult.ruleVersionConstraint = a.Version
 						continue
 					}
 					stepResult.status = denyRuleStepStatusMissingAction
 					continue
 				}
-				// this is a denied Action
+				// This is a denied Action
 				stepResult.status = denyRuleStepStatusDenied
-				stepResult.ruleVersionConstraint = a.Version
 				result.denied = true
-				result.denyRule = r.Name
+				result.denyingRule = r
 				break
 			}
 		default:

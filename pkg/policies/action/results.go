@@ -31,9 +31,9 @@ type denyRuleEvaluationResult struct {
 	// denied specifies whether the Action was denied.
 	denied bool
 
-	// denyRule is the name of the rule which denied the Action, or "" if not
+	// denyingRule is the rule which denied the Action, or "" if not
 	// denied.
-	denyRule string
+	denyingRule *Rule
 
 	// actionMetadata is the metadata of the Action being evaluated.
 	actionMetadata *actionMetadata
@@ -74,11 +74,14 @@ func (de *denyRuleEvaluationResult) passed() bool {
 }
 
 func (de *denyRuleEvaluationResult) explain() string {
+	if de.denyingRule == nil {
+		de.denyingRule = &Rule{Name: "Name unknown"}
+	}
 	s := ""
 	if de.denied {
-		s = fmt.Sprintf("Action \"%s\" version %s hit deny rule \"%s\":\n", de.actionMetadata.name, de.actionMetadata.version, de.denyRule)
+		s = fmt.Sprintf("Action \"%s\" version %s hit deny rule \"%s\":\n", de.actionMetadata.name, de.actionMetadata.version, de.denyingRule.Name)
 	} else {
-		s = fmt.Sprintf("Action \"%s\" version %s did not hit deny rule \"%s\":\n", de.actionMetadata.name, de.actionMetadata.version, de.denyRule)
+		s = fmt.Sprintf("Action \"%s\" version %s did not hit a deny rule.\n", de.actionMetadata.name, de.actionMetadata.version)
 	}
 	// add step results
 	for _, stepResult := range de.steps {

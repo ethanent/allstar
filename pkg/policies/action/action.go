@@ -331,6 +331,10 @@ func (a Action) Check(ctx context.Context, c *github.Client, owner,
 
 	notifyText := fmt.Sprintf(failText, combinedExplain, polName)
 
+	if passing {
+		notifyText = "OK"
+	}
+
 	return &policydef.Result{
 		Enabled:    enabled,
 		Pass:       passing,
