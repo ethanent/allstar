@@ -17,7 +17,8 @@ package action
 import (
 	"context"
 	"fmt"
-	"strings"
+	"io/ioutil"
+	"path/filepath"
 	"testing"
 
 	"github.com/gobwas/glob"
@@ -27,10 +28,27 @@ import (
 )
 
 func TestCheck(t *testing.T) {
+	createWorkflowRun := func(sha, status string) *github.WorkflowRun {
+		return &github.WorkflowRun{
+			HeadSHA: &sha,
+			Status:  &status,
+		}
+	}
+
 	type testingWorkflowMetadata struct {
-		Workflow *actionlint.Workflow
+		// File is the actual filename of the workflow to load.
+		// Will be loaded from test_workflows/ directory.
+		File string
 
 		Runs []*github.WorkflowRun
+
+		// Repos is the set of repos in which this workflow is included
+		Repos []string
+	}
+
+	denyAll := &Rule{
+		Name:   "Deny default",
+		Method: "deny",
 	}
 
 	tests := []struct {
@@ -50,7 +68,301 @@ func TestCheck(t *testing.T) {
 
 		ExpectMessage []string
 		ExpectPass    bool
-	}{}
+	}{
+		{
+			Name: "Deny all, has Action",
+			Org: OrgConfig{
+				Action: "issue",
+				Rules: []*Rule{
+					denyAll,
+				},
+			},
+			ConfigEnabled: true,
+			Workflows: map[string]testingWorkflowMetadata{
+				"test.yaml": {
+					File: "basic.yaml",
+				},
+			},
+			ExpectPass:    false,
+			ExpectMessage: []string{"denied by deny rule \"Deny default\""},
+		},
+		{
+			Name: "Deny all, no Action",
+			Org: OrgConfig{
+				Action: "issue",
+				Rules: []*Rule{
+					denyAll,
+				},
+			},
+			ConfigEnabled: true,
+			Workflows:     map[string]testingWorkflowMetadata{},
+			ExpectPass:    true,
+		},
+		{
+			Name: "Deny all, no Action (but Workflow present)",
+			Org: OrgConfig{
+				Action: "issue",
+				Rules: []*Rule{
+					denyAll,
+				},
+			},
+			ConfigEnabled: true,
+			Workflows: map[string]testingWorkflowMetadata{
+				"actionless.yaml": {
+					File: "actionless.yaml",
+				},
+			},
+			ExpectPass: true,
+		},
+		{
+			Name: "Allowlist new versions, new version",
+			Org: OrgConfig{
+				Action: "issue",
+				Rules: []*Rule{
+					{
+						Name:   "Allowlist trusted rules",
+						Method: "allow",
+						Actions: []*ActionSelector{
+							{
+								Name: "actions/*",
+							},
+							{
+								Name:    "gradle/wrapper-validation-action",
+								Version: ">= 1",
+							},
+						},
+					},
+					denyAll,
+				},
+			},
+			ConfigEnabled: true,
+			Workflows: map[string]testingWorkflowMetadata{
+				"test.yaml": {
+					File: "gradle-wrapper-validate.yaml",
+				},
+			},
+			ExpectPass: true,
+		},
+		{
+			Name: "Allowlist new versions, old version",
+			Org: OrgConfig{
+				Action: "issue",
+				Rules: []*Rule{
+					{
+						Name:   "Allowlist trusted rules",
+						Method: "allow",
+						Actions: []*ActionSelector{
+							{
+								Name: "actions/*",
+							},
+							{
+								Name:    "gradle/wrapper-validation-action",
+								Version: ">= 2",
+							},
+						},
+					},
+					denyAll,
+				},
+			},
+			ConfigEnabled: true,
+			Workflows: map[string]testingWorkflowMetadata{
+				"test.yaml": {
+					File: "gradle-wrapper-validate.yaml",
+				},
+			},
+			ExpectPass: false,
+			ExpectMessage: []string{
+				"does not meet version requirement \">= 2\" for allow rule \"Allowlist",
+				"denied by deny rule \"Deny default\"",
+			},
+		},
+		{
+			Name: "Require new version, new version",
+			Org: OrgConfig{
+				Action: "issue",
+				Rules: []*Rule{
+					{
+						Name:   "Require Gradle Wrapper validation",
+						Method: "require",
+						Actions: []*ActionSelector{
+							{
+								Name:    "gradle/wrapper-validation-action",
+								Version: ">= 1.0.4",
+							},
+						},
+					},
+				},
+			},
+			ConfigEnabled: true,
+			Workflows: map[string]testingWorkflowMetadata{
+				"test.yaml": {
+					File: "gradle-wrapper-validate.yaml",
+				},
+			},
+			ExpectPass: true,
+		},
+		{
+			Name: "Require new version, old version",
+			Org: OrgConfig{
+				Action: "issue",
+				Rules: []*Rule{
+					{
+						Name:   "Require Gradle Wrapper validation",
+						Method: "require",
+						Actions: []*ActionSelector{
+							{
+								Name:    "gradle/wrapper-validation-action",
+								Version: ">= 2",
+							},
+						},
+					},
+				},
+			},
+			ConfigEnabled: true,
+			Workflows: map[string]testingWorkflowMetadata{
+				"test.yaml": {
+					File: "gradle-wrapper-validate.yaml",
+				},
+			},
+			ExpectPass: false,
+			ExpectMessage: []string{
+				"Require rule \"Require Gradle * not satisfied",
+				"0 / 1 requisites met",
+				"Update *\"gradle/wrapper-val*\" to version satisfying \">= 2\"",
+			},
+		},
+		{
+			Name: "Require passing, passing on latest",
+			Org: OrgConfig{
+				Action: "issue",
+				Rules: []*Rule{
+					{
+						Name:     "Require Gradle Wrapper validation",
+						Method:   "require",
+						MustPass: true,
+						Actions: []*ActionSelector{
+							{
+								Name:    "gradle/wrapper-validation-action",
+								Version: ">= 1.0.4",
+							},
+						},
+					},
+				},
+			},
+			ConfigEnabled: true,
+			Workflows: map[string]testingWorkflowMetadata{
+				"test.yaml": {
+					File: "gradle-wrapper-validate.yaml",
+					Runs: []*github.WorkflowRun{
+						createWorkflowRun("sha-latest", "completed"),
+					},
+				},
+			},
+			LatestCommitHash: "sha-latest",
+			ExpectPass:       true,
+		},
+		{
+			Name: "Require passing, passing only on old commit",
+			Org: OrgConfig{
+				Action: "issue",
+				Rules: []*Rule{
+					{
+						Name:     "Require Gradle Wrapper validation",
+						Method:   "require",
+						MustPass: true,
+						Actions: []*ActionSelector{
+							{
+								Name:    "gradle/wrapper-validation-action",
+								Version: ">= 1.0.4",
+							},
+						},
+					},
+				},
+			},
+			ConfigEnabled: true,
+			Workflows: map[string]testingWorkflowMetadata{
+				"test.yaml": {
+					File: "gradle-wrapper-validate.yaml",
+					Runs: []*github.WorkflowRun{
+						createWorkflowRun("sha-old", "completed"),
+					},
+				},
+			},
+			LatestCommitHash: "sha-latest",
+			ExpectPass:       false,
+			ExpectMessage: []string{
+				"Require rule \"Require * not satisfied",
+				"0 / 1 requisites met",
+				"Fix failing * \"gradle/wrapper*\"",
+			},
+		},
+		{
+			Name: "Require passing, failing on current commit",
+			Org: OrgConfig{
+				Action: "issue",
+				Rules: []*Rule{
+					{
+						Name:     "Require Gradle Wrapper validation",
+						Method:   "require",
+						MustPass: true,
+						Actions: []*ActionSelector{
+							{
+								Name:    "gradle/wrapper-validation-action",
+								Version: ">= 1.0.4",
+							},
+						},
+					},
+				},
+			},
+			ConfigEnabled: true,
+			Workflows: map[string]testingWorkflowMetadata{
+				"test.yaml": {
+					File: "gradle-wrapper-validate.yaml",
+					Runs: []*github.WorkflowRun{
+						createWorkflowRun("sha-latest", "failure"),
+					},
+				},
+			},
+			LatestCommitHash: "sha-latest",
+			ExpectPass:       false,
+			ExpectMessage: []string{
+				"Require rule \"Require * not satisfied",
+				"0 / 1 requisites met",
+				"Fix failing * \"gradle/wrapper*\"",
+			},
+		},
+		{
+			Name: "Require, not present",
+			Org: OrgConfig{
+				Action: "issue",
+				Rules: []*Rule{
+					{
+						Name:   "Require Gradle Wrapper validation",
+						Method: "require",
+						Actions: []*ActionSelector{
+							{
+								Name:    "gradle/wrapper-validation-action",
+								Version: ">= 1.0.4",
+							},
+						},
+					},
+				},
+			},
+			ConfigEnabled: true,
+			Workflows: map[string]testingWorkflowMetadata{
+				"test.yaml": {
+					File: "basic.yaml",
+				},
+			},
+			LatestCommitHash: "sha-latest",
+			ExpectPass:       false,
+			ExpectMessage: []string{
+				"Require rule \"Require * not satisfied",
+				"0 / 1 requisites met",
+				"Add Action \"gradle/wrapper*\" with version satisfying \">= 1.0.4\"",
+			},
+		},
+	}
 
 	a := NewAction()
 
@@ -82,9 +394,31 @@ func TestCheck(t *testing.T) {
 			on []string) ([]*workflowMetadata, error) {
 			var wfs []*workflowMetadata
 			for fn, w := range test.Workflows {
+				inThisRepo := false
+				for _, r := range w.Repos {
+					if r == repo {
+						inThisRepo = true
+					}
+				}
+				if w.Repos == nil {
+					inThisRepo = true
+				}
+				if !inThisRepo {
+					continue
+				}
+				d, err := ioutil.ReadFile(filepath.Join("test_workflows", w.File))
+				if err != nil {
+					return nil, fmt.Errorf("failed to open test workflow file: %w", err)
+				}
+				workflow, errs := actionlint.Parse(d)
+				if len(errs) > 0 {
+					for _, er := range errs {
+						t.Logf("parse err: %s", er.Error())
+					}
+				}
 				wfs = append(wfs, &workflowMetadata{
 					filename: fn,
-					workflow: w.Workflow,
+					workflow: workflow,
 				})
 			}
 			return wfs, nil
@@ -93,6 +427,9 @@ func TestCheck(t *testing.T) {
 		// The testing repoSelectorMatch function only matches by name
 		repoSelectorMatch = func(rs *RepoSelector, ctx context.Context, c *github.Client,
 			owner, repo string, gc globCache, sc semverCache) (bool, error) {
+			if rs == nil {
+				return true, nil
+			}
 			comp, err := glob.Compile(rs.Name)
 			if err != nil {
 				return false, err
@@ -123,12 +460,16 @@ func TestCheck(t *testing.T) {
 		}
 
 		if res.Pass != test.ExpectPass {
-			t.Errorf("Test \"%s\" (%d) failed: expect pass = %t, pass = %t", test.Name, i, test.ExpectPass, res.Pass)
+			t.Errorf("Test \"%s\" (%d) failed: expect pass = %t, got pass = %t", test.Name, i, test.ExpectPass, res.Pass)
 		}
 
 		for _, message := range test.ExpectMessage {
-			if !strings.Contains(res.NotifyText, message) {
-				t.Errorf("Test \"%s\" (%d) failed: \"%s\" does not contain \"%s\"", test.Name, i, res.Details, message)
+			comp, err := glob.Compile("*" + message + "*")
+			if err != nil {
+				t.Fatalf("failed to parse ExpectMessage glob: %s", err.Error())
+			}
+			if !comp.Match(res.NotifyText) {
+				t.Errorf("Test \"%s\" (%d) failed: \"%s\" does not contain \"%s\"", test.Name, i, res.NotifyText, message)
 			}
 		}
 	}
