@@ -454,15 +454,7 @@ func (rs *RepoSelector) match(ctx context.Context, c *github.Client, owner, repo
 		if err != nil {
 			return false, err
 		}
-		languageSatisfied := false
-		for l := range langs {
-			for _, sl := range rs.Language {
-				if strings.EqualFold(sl, l) {
-					languageSatisfied = true
-				}
-			}
-		}
-		if !languageSatisfied {
+		if !languageSatisfied(langs, rs.Language) {
 			return false, nil
 		}
 	}
@@ -480,6 +472,40 @@ func (rs *RepoSelector) match(ctx context.Context, c *github.Client, owner, repo
 		}
 	}
 	return true, nil
+}
+
+// languageSatisfied determines from a map of languages to bytes whether the
+// queried languages are significantly present.
+func languageSatisfied(langs map[string]int, want []string) bool {
+	totalBytes := 0
+
+	topLangBytes := 0
+	topLang := ""
+
+	var significantLanguages []string
+
+	for l, b := range langs {
+		totalBytes += b
+		if topLang == "" || topLangBytes < b {
+			topLang = l
+			topLangBytes = b
+		}
+		if b > 3000 {
+			significantLanguages = append(significantLanguages, l)
+		}
+	}
+
+	significantLanguages = append(significantLanguages, topLang)
+
+	for _, w := range want {
+		for _, s := range significantLanguages {
+			if strings.EqualFold(s, w) {
+				return true
+			}
+		}
+	}
+
+	return false
 }
 
 // githubGetLatestCommitHash gets the latest commit hash for a repo's default

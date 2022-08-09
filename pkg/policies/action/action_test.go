@@ -48,6 +48,18 @@ func TestCheck(t *testing.T) {
 		Method: "deny",
 	}
 
+	requireGoAction := &Rule{
+		Name:   "Require mandatory Go Actions",
+		Method: "require",
+		Actions: []*ActionSelector{
+			{
+				Name:    "ossf/go-action",
+				Version: "commit-ref-1",
+			},
+		},
+		RequireAll: true,
+	}
+
 	tests := []struct {
 		Name string
 
@@ -482,17 +494,7 @@ func TestCheck(t *testing.T) {
 							},
 						},
 						Rules: []*Rule{
-							{
-								Name:   "Require OSSF's Go Action",
-								Method: "require",
-								Actions: []*ActionSelector{
-									{
-										Name:    "ossf/go-action",
-										Version: "commit-ref-1",
-									},
-								},
-								RequireAll: true,
-							},
+							requireGoAction,
 						},
 					},
 				},
@@ -521,17 +523,7 @@ func TestCheck(t *testing.T) {
 							},
 						},
 						Rules: []*Rule{
-							{
-								Name:   "Require OSSF's Go Action",
-								Method: "require",
-								Actions: []*ActionSelector{
-									{
-										Name:    "ossf/go-action",
-										Version: "commit-ref-1",
-									},
-								},
-								RequireAll: true,
-							},
+							requireGoAction,
 						},
 					},
 				},
@@ -546,7 +538,7 @@ func TestCheck(t *testing.T) {
 			},
 			ExpectPass: false,
 			ExpectMessage: []string{
-				`Require rule "Require OSSF* (member of rule group "Go repos* not satisfied`,
+				`Require rule "Require mandatory Go Actions* (member of rule group "Go repos* not satisfied`,
 				`Add Action "ossf/go-action" with version satisfying "commit-ref-1"`,
 			},
 		},
@@ -563,17 +555,7 @@ func TestCheck(t *testing.T) {
 							},
 						},
 						Rules: []*Rule{
-							{
-								Name:   "Require OSSF's Go Action",
-								Method: "require",
-								Actions: []*ActionSelector{
-									{
-										Name:    "ossf/go-action",
-										Version: "commit-ref-1",
-									},
-								},
-								RequireAll: true,
-							},
+							requireGoAction,
 						},
 					},
 				},
@@ -588,92 +570,150 @@ func TestCheck(t *testing.T) {
 			},
 			ExpectPass: true,
 		},
+		{
+			Name: "Require for non-top but significant lang, missing",
+			Org: OrgConfig{
+				Action: "issue",
+				Groups: []*RuleGroup{
+					{
+						Name: "Go repos",
+						Repos: []*RepoSelector{
+							{
+								Language: []string{"go"},
+							},
+						},
+						Rules: []*Rule{
+							requireGoAction,
+						},
+					},
+				},
+			},
+			Workflows: []testingWorkflowMetadata{
+				{
+					File: "basic.yaml",
+				},
+			},
+			Langs: map[string]int{
+				"c":  7000,
+				"go": 5000,
+			},
+			ExpectPass: false,
+		},
+		{
+			Name: "Require for insignificant lang, missing",
+			Org: OrgConfig{
+				Action: "issue",
+				Groups: []*RuleGroup{
+					{
+						Name: "Go repos",
+						Repos: []*RepoSelector{
+							{
+								Language: []string{"go"},
+							},
+						},
+						Rules: []*Rule{
+							requireGoAction,
+						},
+					},
+				},
+			},
+			Workflows: []testingWorkflowMetadata{
+				{
+					File: "basic.yaml",
+				},
+			},
+			Langs: map[string]int{
+				"c":  7000,
+				"go": 60,
+			},
+			ExpectPass: true,
+		},
 	}
 
 	a := NewAction()
 
-	for i, test := range tests {
-		// Set rule group to each rule's group
+	for _, test := range tests {
+		t.Run(test.Name, func(t *testing.T) {
+			// Set rule group to each rule's group
 
-		for _, g := range test.Org.Groups {
-			for _, r := range g.Rules {
-				r.group = g
-			}
-		}
-
-		// Override external functions
-
-		configFetchConfig = func(ctx context.Context, c *github.Client, owner, repo, path string,
-			ol config.ConfigLevel, out interface{}) error {
-			if ol == config.OrgLevel {
-				oc := out.(*OrgConfig)
-				*oc = test.Org
-			}
-			return nil
-		}
-
-		listWorkflows = func(ctx context.Context, c *github.Client, owner, repo string,
-			on []string) ([]*workflowMetadata, error) {
-			var wfs []*workflowMetadata
-			for _, w := range test.Workflows {
-				d, err := ioutil.ReadFile(filepath.Join("test_workflows", w.File))
-				if err != nil {
-					return nil, fmt.Errorf("failed to open test workflow file: %w", err)
+			for _, g := range test.Org.Groups {
+				for _, r := range g.Rules {
+					r.group = g
 				}
-				workflow, errs := actionlint.Parse(d)
-				if len(errs) > 0 {
-					for _, er := range errs {
-						t.Logf("parse err: %s", er.Error())
+			}
+
+			// Override external functions
+
+			configFetchConfig = func(ctx context.Context, c *github.Client, owner, repo, path string,
+				ol config.ConfigLevel, out interface{}) error {
+				if ol == config.OrgLevel {
+					oc := out.(*OrgConfig)
+					*oc = test.Org
+				}
+				return nil
+			}
+
+			listWorkflows = func(ctx context.Context, c *github.Client, owner, repo string,
+				on []string) ([]*workflowMetadata, error) {
+				var wfs []*workflowMetadata
+				for _, w := range test.Workflows {
+					d, err := ioutil.ReadFile(filepath.Join("test_workflows", w.File))
+					if err != nil {
+						return nil, fmt.Errorf("failed to open test workflow file: %w", err)
+					}
+					workflow, errs := actionlint.Parse(d)
+					if len(errs) > 0 {
+						for _, er := range errs {
+							t.Logf("parse err: %s", er.Error())
+						}
+					}
+					wfs = append(wfs, &workflowMetadata{
+						filename: w.File,
+						workflow: workflow,
+					})
+				}
+				return wfs, nil
+			}
+
+			listLanguages = func(ctx context.Context, c *github.Client, owner, repo string) (map[string]int, error) {
+				return test.Langs, nil
+			}
+
+			listWorkflowRunsByFilename = func(ctx context.Context, c *github.Client, owner, repo,
+				workflowFilename string) ([]*github.WorkflowRun, error) {
+				for _, wf := range test.Workflows {
+					if wf.File == workflowFilename {
+						return wf.Runs, nil
 					}
 				}
-				wfs = append(wfs, &workflowMetadata{
-					filename: w.File,
-					workflow: workflow,
-				})
+				return nil, fmt.Errorf("could not find testWorkflowMetadata for filename %s", workflowFilename)
 			}
-			return wfs, nil
-		}
 
-		listLanguages = func(ctx context.Context, c *github.Client, owner, repo string) (map[string]int, error) {
-			return test.Langs, nil
-		}
+			getLatestCommitHash = func(ctx context.Context, c *github.Client, owner, repo string) (string, error) {
+				return test.LatestCommitHash, nil
+			}
 
-		listWorkflowRunsByFilename = func(ctx context.Context, c *github.Client, owner, repo,
-			workflowFilename string) ([]*github.WorkflowRun, error) {
-			for _, wf := range test.Workflows {
-				if wf.File == workflowFilename {
-					return wf.Runs, nil
+			res, err := a.Check(context.Background(), nil, "thisorg", "thisrepo")
+
+			// Check result
+
+			if err != nil {
+				t.Errorf("Error: %e", err)
+			}
+
+			if res.Pass != test.ExpectPass {
+				t.Errorf("Expect pass = %t, got pass = %t", test.ExpectPass, res.Pass)
+			}
+
+			for _, message := range test.ExpectMessage {
+				comp, err := glob.Compile("*" + message + "*")
+				if err != nil {
+					t.Errorf("failed to parse ExpectMessage glob: %s", err.Error())
+				}
+				if !comp.Match(res.NotifyText) {
+					t.Errorf("\"%s\" does not contain \"%s\"", res.NotifyText, message)
 				}
 			}
-			return nil, fmt.Errorf("could not find testWorkflowMetadata for filename %s", workflowFilename)
-		}
-
-		getLatestCommitHash = func(ctx context.Context, c *github.Client, owner, repo string) (string, error) {
-			return test.LatestCommitHash, nil
-		}
-
-		res, err := a.Check(context.Background(), nil, "thisorg", "thisrepo")
-
-		// Check result
-
-		if err != nil {
-			t.Errorf("Test \"%s\" (%d) failed: %e", test.Name, i, err)
-			continue
-		}
-
-		if res.Pass != test.ExpectPass {
-			t.Errorf("Test \"%s\" (%d) failed: expect pass = %t, got pass = %t", test.Name, i, test.ExpectPass, res.Pass)
-			continue
-		}
-
-		for _, message := range test.ExpectMessage {
-			comp, err := glob.Compile("*" + message + "*")
-			if err != nil {
-				t.Fatalf("failed to parse ExpectMessage glob: %s", err.Error())
-			}
-			if !comp.Match(res.NotifyText) {
-				t.Errorf("Test \"%s\" (%d) failed: \"%s\" does not contain \"%s\"", test.Name, i, res.NotifyText, message)
-			}
-		}
+		})
 	}
 }

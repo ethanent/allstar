@@ -185,14 +185,15 @@ func (r *Rule) string(capitalize bool) string {
 	if groupName == "" {
 		groupDesc = "member of nameless rule group"
 	}
+	displayMethod := r.Method
 	if capitalize {
 		if len(r.Method) > 2 {
-			r.Method = strings.ToUpper(r.Method[:1]) + strings.ToLower(r.Method[1:])
+			displayMethod = strings.ToUpper(r.Method[:1]) + strings.ToLower(r.Method[1:])
 		}
 	}
-	ruleDesc := fmt.Sprintf("%s rule \"%s\"", r.Method, r.Name)
+	ruleDesc := fmt.Sprintf("%s rule \"%s\"", displayMethod, r.Name)
 	if r.Name == "" {
-		ruleDesc = fmt.Sprintf("Nameless %s rule", r.Method)
+		ruleDesc = fmt.Sprintf("Nameless %s rule", displayMethod)
 	}
 	return fmt.Sprintf("%s (%s)", ruleDesc, groupDesc)
 }
