@@ -69,18 +69,13 @@ func evaluateActionDenied(rules []*Rule, action *actionMetadata, gc globCache, s
 				break
 			}
 			for _, a := range r.Actions {
-				match, matchName, _, err := a.match(action, gc, sc)
+				match, _, _, err := a.match(action, gc, sc)
 				if err != nil {
 					errs = append(errs, err)
 					stepResult.status = denyRuleStepStatusError
 					break
 				}
 				if !match {
-					if matchName {
-						stepResult.status = denyRuleStepStatusActionVersionMismatch
-						stepResult.ruleVersionConstraint = a.Version
-						continue
-					}
 					stepResult.status = denyRuleStepStatusMissingAction
 					continue
 				}
@@ -112,9 +107,9 @@ func evaluateRequireRule(ctx context.Context, c *github.Client, owner, repo stri
 	if rule.Method != "require" {
 		return nil, fmt.Errorf("rule is not a require rule")
 	}
-	useCount := len(rule.Actions)
-	if rule.Count != nil {
-		useCount = *rule.Count
+	useCount := 1
+	if rule.RequireAll {
+		useCount = len(rule.Actions)
 	}
 
 	result := &requireRuleEvaluationResult{
@@ -123,7 +118,7 @@ func evaluateRequireRule(ctx context.Context, c *github.Client, owner, repo stri
 		numberRequired:  useCount,
 		numberSatisfied: 0,
 
-		ruleName: rule.Name,
+		rule: rule,
 	}
 
 	for _, ra := range rule.Actions {

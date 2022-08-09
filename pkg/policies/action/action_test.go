@@ -41,9 +41,6 @@ func TestCheck(t *testing.T) {
 		File string
 
 		Runs []*github.WorkflowRun
-
-		// Repos is the set of repos in which this workflow is included
-		Repos []string
 	}
 
 	denyAll := &Rule{
@@ -54,17 +51,15 @@ func TestCheck(t *testing.T) {
 	tests := []struct {
 		Name string
 
-		Repo    RepoConfig
-		OrgRepo RepoConfig
-		Org     OrgConfig
-
-		ConfigEnabled bool
+		Org OrgConfig
 
 		// Workflows is a map of filenames to workflowMetadata structs.
 		// Filename: just filename eg. "my_workflow.yaml"
-		Workflows map[string]testingWorkflowMetadata
+		Workflows []testingWorkflowMetadata
 
 		LatestCommitHash string
+
+		Langs map[string]int
 
 		ExpectMessage []string
 		ExpectPass    bool
@@ -73,13 +68,16 @@ func TestCheck(t *testing.T) {
 			Name: "Deny all, has Action",
 			Org: OrgConfig{
 				Action: "issue",
-				Rules: []*Rule{
-					denyAll,
+				Groups: []*RuleGroup{
+					{
+						Rules: []*Rule{
+							denyAll,
+						},
+					},
 				},
 			},
-			ConfigEnabled: true,
-			Workflows: map[string]testingWorkflowMetadata{
-				"test.yaml": {
+			Workflows: []testingWorkflowMetadata{
+				{
 					File: "basic.yaml",
 				},
 			},
@@ -90,47 +88,77 @@ func TestCheck(t *testing.T) {
 			Name: "Deny all, no Action",
 			Org: OrgConfig{
 				Action: "issue",
-				Rules: []*Rule{
-					denyAll,
+				Groups: []*RuleGroup{
+					{
+						Rules: []*Rule{
+							denyAll,
+						},
+					},
 				},
 			},
-			ConfigEnabled: true,
-			Workflows:     map[string]testingWorkflowMetadata{},
-			ExpectPass:    true,
+			Workflows:  []testingWorkflowMetadata{},
+			ExpectPass: true,
 		},
 		{
 			Name: "Deny all, no Action (but Workflow present)",
 			Org: OrgConfig{
 				Action: "issue",
-				Rules: []*Rule{
-					denyAll,
+				Groups: []*RuleGroup{
+					{
+						Rules: []*Rule{
+							denyAll,
+						},
+					},
 				},
 			},
-			ConfigEnabled: true,
-			Workflows: map[string]testingWorkflowMetadata{
-				"actionless.yaml": {
+			Workflows: []testingWorkflowMetadata{
+				{
 					File: "actionless.yaml",
 				},
 			},
 			ExpectPass: true,
 		},
 		{
-			Name: "Deny some, repo match",
+			Name: "Deny all, Action present",
 			Org: OrgConfig{
 				Action: "issue",
-				Rules: []*Rule{
+				Groups: []*RuleGroup{
 					{
-						Name:   "Deny some",
-						Method: "deny",
-						Repo: &RepoSelector{
-							Name: "*",
+						Rules: []*Rule{
+							denyAll,
 						},
 					},
 				},
 			},
-			ConfigEnabled: true,
-			Workflows: map[string]testingWorkflowMetadata{
-				"test.yaml": {
+			Workflows: []testingWorkflowMetadata{
+				{
+					File: "basic.yaml",
+				},
+			},
+			ExpectPass: false,
+		},
+		{
+			Name: "Deny some, repo match",
+			Org: OrgConfig{
+				Action: "issue",
+				Groups: []*RuleGroup{
+					{
+						Repos: []*RepoSelector{
+							{
+								Name: "*",
+							},
+						},
+						Rules: []*Rule{
+							{
+								Name:   "Deny some",
+								Method: "deny",
+							},
+						},
+					},
+				},
+			},
+			Workflows: []testingWorkflowMetadata{
+				{
 					File: "basic.yaml",
 				},
 			},
@@ -141,28 +169,30 @@ func TestCheck(t *testing.T) {
 			Name: "Deny some, repo no match due to exclusion",
 			Org: OrgConfig{
 				Action: "issue",
-				Rules: []*Rule{
+				Groups: []*RuleGroup{
 					{
-						Name:   "Deny some",
-						Method: "deny",
-						Repo: &RepoSelector{
-							Name: "*",
-							Exclude: []*RepoSelector{
-								{
-									Name: "testrepo-h*",
+						Repos: []*RepoSelector{
+							{
+								Name: "*",
+								Exclude: []*RepoSelector{
+									{
+										Name: "t*srepo",
+									},
 								},
+							},
+						},
+						Rules: []*Rule{
+							{
+								Name:   "Deny some",
+								Method: "deny",
 							},
 						},
 					},
 				},
 			},
-			ConfigEnabled: true,
-			Workflows: map[string]testingWorkflowMetadata{
-				"test.yaml": {
+			Workflows: []testingWorkflowMetadata{
+				{
 					File: "basic.yaml",
-					Repos: []string{
-						"testrepo-hello",
-					},
 				},
 			},
 			ExpectPass: true,
@@ -171,26 +201,29 @@ func TestCheck(t *testing.T) {
 			Name: "Allowlist new versions, new version",
 			Org: OrgConfig{
 				Action: "issue",
-				Rules: []*Rule{
+				Groups: []*RuleGroup{
 					{
-						Name:   "Allowlist trusted rules",
-						Method: "allow",
-						Actions: []*ActionSelector{
+						Rules: []*Rule{
 							{
-								Name: "actions/*",
+								Name:   "Allowlist trusted rules",
+								Method: "allow",
+								Actions: []*ActionSelector{
+									{
+										Name: "actions/*",
+									},
+									{
+										Name:    "gradle/wrapper-validation-action",
+										Version: ">= 1",
+									},
+								},
 							},
-							{
-								Name:    "gradle/wrapper-validation-action",
-								Version: ">= 1",
-							},
+							denyAll,
 						},
 					},
-					denyAll,
 				},
 			},
-			ConfigEnabled: true,
-			Workflows: map[string]testingWorkflowMetadata{
-				"test.yaml": {
+			Workflows: []testingWorkflowMetadata{
+				{
 					File: "gradle-wrapper-validate.yaml",
 				},
 			},
@@ -200,26 +233,29 @@ func TestCheck(t *testing.T) {
 			Name: "Allowlist new versions, old version",
 			Org: OrgConfig{
 				Action: "issue",
-				Rules: []*Rule{
+				Groups: []*RuleGroup{
 					{
-						Name:   "Allowlist trusted rules",
-						Method: "allow",
-						Actions: []*ActionSelector{
+						Rules: []*Rule{
 							{
-								Name: "actions/*",
+								Name:   "Allowlist trusted rules",
+								Method: "allow",
+								Actions: []*ActionSelector{
+									{
+										Name: "actions/*",
+									},
+									{
+										Name:    "gradle/wrapper-validation-action",
+										Version: ">= 2",
+									},
+								},
 							},
-							{
-								Name:    "gradle/wrapper-validation-action",
-								Version: ">= 2",
-							},
+							denyAll,
 						},
 					},
-					denyAll,
 				},
 			},
-			ConfigEnabled: true,
-			Workflows: map[string]testingWorkflowMetadata{
-				"test.yaml": {
+			Workflows: []testingWorkflowMetadata{
+				{
 					File: "gradle-wrapper-validate.yaml",
 				},
 			},
@@ -233,22 +269,25 @@ func TestCheck(t *testing.T) {
 			Name: "Require new version, new version",
 			Org: OrgConfig{
 				Action: "issue",
-				Rules: []*Rule{
+				Groups: []*RuleGroup{
 					{
-						Name:   "Require Gradle Wrapper validation",
-						Method: "require",
-						Actions: []*ActionSelector{
+						Rules: []*Rule{
 							{
-								Name:    "gradle/wrapper-validation-action",
-								Version: ">= 1.0.4",
+								Name:   "Require Gradle Wrapper validation",
+								Method: "require",
+								Actions: []*ActionSelector{
+									{
+										Name:    "gradle/wrapper-validation-action",
+										Version: ">= 1.0.4",
+									},
+								},
 							},
 						},
 					},
 				},
 			},
-			ConfigEnabled: true,
-			Workflows: map[string]testingWorkflowMetadata{
-				"test.yaml": {
+			Workflows: []testingWorkflowMetadata{
+				{
 					File: "gradle-wrapper-validate.yaml",
 				},
 			},
@@ -258,22 +297,25 @@ func TestCheck(t *testing.T) {
 			Name: "Require new version, old version",
 			Org: OrgConfig{
 				Action: "issue",
-				Rules: []*Rule{
+				Groups: []*RuleGroup{
 					{
-						Name:   "Require Gradle Wrapper validation",
-						Method: "require",
-						Actions: []*ActionSelector{
+						Rules: []*Rule{
 							{
-								Name:    "gradle/wrapper-validation-action",
-								Version: ">= 2",
+								Name:   "Require Gradle Wrapper validation",
+								Method: "require",
+								Actions: []*ActionSelector{
+									{
+										Name:    "gradle/wrapper-validation-action",
+										Version: ">= 2",
+									},
+								},
 							},
 						},
 					},
 				},
 			},
-			ConfigEnabled: true,
-			Workflows: map[string]testingWorkflowMetadata{
-				"test.yaml": {
+			Workflows: []testingWorkflowMetadata{
+				{
 					File: "gradle-wrapper-validate.yaml",
 				},
 			},
@@ -288,23 +330,26 @@ func TestCheck(t *testing.T) {
 			Name: "Require passing, passing on latest",
 			Org: OrgConfig{
 				Action: "issue",
-				Rules: []*Rule{
+				Groups: []*RuleGroup{
 					{
-						Name:     "Require Gradle Wrapper validation",
-						Method:   "require",
-						MustPass: true,
-						Actions: []*ActionSelector{
+						Rules: []*Rule{
 							{
-								Name:    "gradle/wrapper-validation-action",
-								Version: ">= 1.0.4",
+								Name:     "Require Gradle Wrapper validation",
+								Method:   "require",
+								MustPass: true,
+								Actions: []*ActionSelector{
+									{
+										Name:    "gradle/wrapper-validation-action",
+										Version: ">= 1.0.4",
+									},
+								},
 							},
 						},
 					},
 				},
 			},
-			ConfigEnabled: true,
-			Workflows: map[string]testingWorkflowMetadata{
-				"test.yaml": {
+			Workflows: []testingWorkflowMetadata{
+				{
 					File: "gradle-wrapper-validate.yaml",
 					Runs: []*github.WorkflowRun{
 						createWorkflowRun("sha-latest", "completed"),
@@ -318,23 +363,26 @@ func TestCheck(t *testing.T) {
 			Name: "Require passing, passing only on old commit",
 			Org: OrgConfig{
 				Action: "issue",
-				Rules: []*Rule{
+				Groups: []*RuleGroup{
 					{
-						Name:     "Require Gradle Wrapper validation",
-						Method:   "require",
-						MustPass: true,
-						Actions: []*ActionSelector{
+						Rules: []*Rule{
 							{
-								Name:    "gradle/wrapper-validation-action",
-								Version: ">= 1.0.4",
+								Name:     "Require Gradle Wrapper validation",
+								Method:   "require",
+								MustPass: true,
+								Actions: []*ActionSelector{
+									{
+										Name:    "gradle/wrapper-validation-action",
+										Version: ">= 1.0.4",
+									},
+								},
 							},
 						},
 					},
 				},
 			},
-			ConfigEnabled: true,
-			Workflows: map[string]testingWorkflowMetadata{
-				"test.yaml": {
+			Workflows: []testingWorkflowMetadata{
+				{
 					File: "gradle-wrapper-validate.yaml",
 					Runs: []*github.WorkflowRun{
 						createWorkflowRun("sha-old", "completed"),
@@ -353,23 +401,26 @@ func TestCheck(t *testing.T) {
 			Name: "Require passing, failing on current commit",
 			Org: OrgConfig{
 				Action: "issue",
-				Rules: []*Rule{
+				Groups: []*RuleGroup{
 					{
-						Name:     "Require Gradle Wrapper validation",
-						Method:   "require",
-						MustPass: true,
-						Actions: []*ActionSelector{
+						Rules: []*Rule{
 							{
-								Name:    "gradle/wrapper-validation-action",
-								Version: ">= 1.0.4",
+								Name:     "Require Gradle Wrapper validation",
+								Method:   "require",
+								MustPass: true,
+								Actions: []*ActionSelector{
+									{
+										Name:    "gradle/wrapper-validation-action",
+										Version: ">= 1.0.4",
+									},
+								},
 							},
 						},
 					},
 				},
 			},
-			ConfigEnabled: true,
-			Workflows: map[string]testingWorkflowMetadata{
-				"test.yaml": {
+			Workflows: []testingWorkflowMetadata{
+				{
 					File: "gradle-wrapper-validate.yaml",
 					Runs: []*github.WorkflowRun{
 						createWorkflowRun("sha-latest", "failure"),
@@ -388,22 +439,25 @@ func TestCheck(t *testing.T) {
 			Name: "Require, not present",
 			Org: OrgConfig{
 				Action: "issue",
-				Rules: []*Rule{
+				Groups: []*RuleGroup{
 					{
-						Name:   "Require Gradle Wrapper validation",
-						Method: "require",
-						Actions: []*ActionSelector{
+						Rules: []*Rule{
 							{
-								Name:    "gradle/wrapper-validation-action",
-								Version: ">= 1.0.4",
+								Name:   "Require Gradle Wrapper validation",
+								Method: "require",
+								Actions: []*ActionSelector{
+									{
+										Name:    "gradle/wrapper-validation-action",
+										Version: ">= 1.0.4",
+									},
+								},
 							},
 						},
 					},
 				},
 			},
-			ConfigEnabled: true,
-			Workflows: map[string]testingWorkflowMetadata{
-				"test.yaml": {
+			Workflows: []testingWorkflowMetadata{
+				{
 					File: "basic.yaml",
 				},
 			},
@@ -415,50 +469,153 @@ func TestCheck(t *testing.T) {
 				"Add Action \"gradle/wrapper*\" with version satisfying \">= 1.0.4\"",
 			},
 		},
+		{
+			Name: "Require for lang, present",
+			Org: OrgConfig{
+				Action: "issue",
+				Groups: []*RuleGroup{
+					{
+						Name: "Go repos",
+						Repos: []*RepoSelector{
+							{
+								Language: []string{"go"},
+							},
+						},
+						Rules: []*Rule{
+							{
+								Name:   "Require OSSF's Go Action",
+								Method: "require",
+								Actions: []*ActionSelector{
+									{
+										Name:    "ossf/go-action",
+										Version: "commit-ref-1",
+									},
+								},
+								RequireAll: true,
+							},
+						},
+					},
+				},
+			},
+			Workflows: []testingWorkflowMetadata{
+				{
+					File: "go-workflow.yaml",
+				},
+			},
+			Langs: map[string]int{
+				"go": 1000,
+			},
+			ExpectPass:    true,
+			ExpectMessage: []string{},
+		},
+		{
+			Name: "Require for lang, missing",
+			Org: OrgConfig{
+				Action: "issue",
+				Groups: []*RuleGroup{
+					{
+						Name: "Go repos",
+						Repos: []*RepoSelector{
+							{
+								Language: []string{"go"},
+							},
+						},
+						Rules: []*Rule{
+							{
+								Name:   "Require OSSF's Go Action",
+								Method: "require",
+								Actions: []*ActionSelector{
+									{
+										Name:    "ossf/go-action",
+										Version: "commit-ref-1",
+									},
+								},
+								RequireAll: true,
+							},
+						},
+					},
+				},
+			},
+			Workflows: []testingWorkflowMetadata{
+				{
+					File: "basic.yaml",
+				},
+			},
+			Langs: map[string]int{
+				"go": 1000,
+			},
+			ExpectPass: false,
+			ExpectMessage: []string{
+				`Require rule "Require OSSF* (member of rule group "Go repos* not satisfied`,
+				`Add Action "ossf/go-action" with version satisfying "commit-ref-1"`,
+			},
+		},
+		{
+			Name: "Require for another lang, missing",
+			Org: OrgConfig{
+				Action: "issue",
+				Groups: []*RuleGroup{
+					{
+						Name: "Go repos",
+						Repos: []*RepoSelector{
+							{
+								Language: []string{"go"},
+							},
+						},
+						Rules: []*Rule{
+							{
+								Name:   "Require OSSF's Go Action",
+								Method: "require",
+								Actions: []*ActionSelector{
+									{
+										Name:    "ossf/go-action",
+										Version: "commit-ref-1",
+									},
+								},
+								RequireAll: true,
+							},
+						},
+					},
+				},
+			},
+			Workflows: []testingWorkflowMetadata{
+				{
+					File: "basic.yaml",
+				},
+			},
+			Langs: map[string]int{
+				"ts": 1000,
+			},
+			ExpectPass: true,
+		},
 	}
 
 	a := NewAction()
 
 	for i, test := range tests {
+		// Set rule group to each rule's group
+
+		for _, g := range test.Org.Groups {
+			for _, r := range g.Rules {
+				r.group = g
+			}
+		}
+
 		// Override external functions
 
 		configFetchConfig = func(ctx context.Context, c *github.Client, owner, repo, path string,
 			ol config.ConfigLevel, out interface{}) error {
-			switch ol {
-			case config.RepoLevel:
-				rc := out.(*RepoConfig)
-				*rc = test.Repo
-			case config.OrgRepoLevel:
-				orc := out.(*RepoConfig)
-				*orc = test.OrgRepo
-			case config.OrgLevel:
+			if ol == config.OrgLevel {
 				oc := out.(*OrgConfig)
 				*oc = test.Org
 			}
 			return nil
 		}
 
-		configIsEnabled = func(ctx context.Context, o config.OrgOptConfig, orc,
-			r config.RepoOptConfig, c *github.Client, owner, repo string) (bool, error) {
-			return test.ConfigEnabled, nil
-		}
-
 		listWorkflows = func(ctx context.Context, c *github.Client, owner, repo string,
 			on []string) ([]*workflowMetadata, error) {
 			var wfs []*workflowMetadata
-			for fn, w := range test.Workflows {
-				inThisRepo := false
-				for _, r := range w.Repos {
-					if r == repo {
-						inThisRepo = true
-					}
-				}
-				if w.Repos == nil {
-					inThisRepo = true
-				}
-				if !inThisRepo {
-					continue
-				}
+			for _, w := range test.Workflows {
 				d, err := ioutil.ReadFile(filepath.Join("test_workflows", w.File))
 				if err != nil {
 					return nil, fmt.Errorf("failed to open test workflow file: %w", err)
@@ -470,41 +627,25 @@ func TestCheck(t *testing.T) {
 					}
 				}
 				wfs = append(wfs, &workflowMetadata{
-					filename: fn,
+					filename: w.File,
 					workflow: workflow,
 				})
 			}
 			return wfs, nil
 		}
 
-		// The testing repoSelectorMatch function only matches by name
-		repoSelectorMatch = func(rs *RepoSelector, ctx context.Context, c *github.Client,
-			owner, repo string, excludeDepth int, gc globCache, sc semverCache) (bool, error) {
-			if rs == nil {
-				return true, nil
-			}
-			comp, err := glob.Compile(rs.Name)
-			if err != nil {
-				return false, err
-			}
-			// Apply exclusions
-			if excludeDepth >= 0 || excludeDepth == -1 {
-				for _, exc := range rs.Exclude {
-					if match, _ := repoSelectorMatch(exc, ctx, c, owner, repo, excludeDepth-1, gc, sc); match {
-						return false, nil
-					}
-				}
-			}
-			return comp.Match(repo), nil
+		listLanguages = func(ctx context.Context, c *github.Client, owner, repo string) (map[string]int, error) {
+			return test.Langs, nil
 		}
 
 		listWorkflowRunsByFilename = func(ctx context.Context, c *github.Client, owner, repo,
 			workflowFilename string) ([]*github.WorkflowRun, error) {
-			twm, ok := test.Workflows[workflowFilename]
-			if !ok {
-				return nil, fmt.Errorf("could not find testWorkflowMetadata for filename %s", workflowFilename)
+			for _, wf := range test.Workflows {
+				if wf.File == workflowFilename {
+					return wf.Runs, nil
+				}
 			}
-			return twm.Runs, nil
+			return nil, fmt.Errorf("could not find testWorkflowMetadata for filename %s", workflowFilename)
 		}
 
 		getLatestCommitHash = func(ctx context.Context, c *github.Client, owner, repo string) (string, error) {
@@ -522,6 +663,7 @@ func TestCheck(t *testing.T) {
 
 		if res.Pass != test.ExpectPass {
 			t.Errorf("Test \"%s\" (%d) failed: expect pass = %t, got pass = %t", test.Name, i, test.ExpectPass, res.Pass)
+			continue
 		}
 
 		for _, message := range test.ExpectMessage {

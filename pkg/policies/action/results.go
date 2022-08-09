@@ -14,7 +14,10 @@
 
 package action
 
-import "fmt"
+import (
+	"fmt"
+	"strings"
+)
 
 // ruleEvaluationResult represents a result of evaluating a rule.
 type ruleEvaluationResult interface {
@@ -79,7 +82,7 @@ func (de *denyRuleEvaluationResult) explain() string {
 	}
 	s := ""
 	if de.denied {
-		s = fmt.Sprintf("Action \"%s\" version %s hit deny rule \"%s\":\n", de.actionMetadata.name, de.actionMetadata.version, de.denyingRule.Name)
+		s = fmt.Sprintf("Action \"%s\" version %s hit %s:\n", de.actionMetadata.name, de.actionMetadata.version, de.denyingRule.string(false))
 	} else {
 		s = fmt.Sprintf("Action \"%s\" version %s did not hit a deny rule.\n", de.actionMetadata.name, de.actionMetadata.version)
 	}
@@ -94,15 +97,15 @@ func (de *denyRuleEvaluationResult) explain() string {
 func (des *denyRuleEvaluationStepResult) string() string {
 	switch des.status {
 	case denyRuleStepStatusActionVersionMismatch:
-		return fmt.Sprintf("does not meet version requirement \"%s\" for %s rule \"%s\"", des.ruleVersionConstraint, des.rule.Method, des.rule.Name)
+		return fmt.Sprintf("does not meet version requirement \"%s\" for %s", des.ruleVersionConstraint, des.rule.string(false))
 	case denyRuleStepStatusMissingAction:
-		return fmt.Sprintf("is not listed in %s rule \"%s\"", des.rule.Method, des.rule.Name)
+		return fmt.Sprintf("is not listed in %s", des.rule.string(false))
 	case denyRuleStepStatusAllowed:
-		return fmt.Sprintf("allowed by %s rule \"%s\"", des.rule.Method, des.rule.Name)
+		return fmt.Sprintf("allowed by %s", des.rule.string(false))
 	case denyRuleStepStatusDenied:
-		return fmt.Sprintf("denied by %s rule \"%s\"", des.rule.Method, des.rule.Name)
+		return fmt.Sprintf("denied by %s", des.rule.string(false))
 	case denyRuleStepStatusError:
-		return fmt.Sprintf("%s rule \"%s\" experienced an error", des.rule.Method, des.rule.Name)
+		return fmt.Sprintf("%s experienced an error", des.rule.string(true))
 	default:
 		return "unknown deny eval step result"
 	}
@@ -115,7 +118,7 @@ type requireRuleEvaluationResult struct {
 	numberRequired  int
 	numberSatisfied int
 
-	ruleName string
+	rule *Rule
 
 	fixes []*requireRuleEvaluationFix
 }
@@ -145,9 +148,9 @@ func (re *requireRuleEvaluationResult) passed() bool {
 func (re *requireRuleEvaluationResult) explain() string {
 	s := ""
 	if !re.satisfied {
-		s = fmt.Sprintf("Require rule \"%s\" not satisfied:\n", re.ruleName)
+		s = fmt.Sprintf("%s not satisfied:\n", re.rule.string(true))
 	} else {
-		s = fmt.Sprintf("Require rule \"%s\" satisfied:\n", re.ruleName)
+		s = fmt.Sprintf("%s satisfied:\n", re.rule.string(true))
 	}
 	s += fmt.Sprintf("-> %d / %d requisites met\n", re.numberSatisfied, re.numberRequired)
 	if re.satisfied {
@@ -171,4 +174,25 @@ func (rf *requireRuleEvaluationFix) string() string {
 	default:
 		return "unknown require rule eval fix"
 	}
+}
+
+func (r *Rule) string(capitalize bool) string {
+	groupName := "Unknown"
+	if r.group != nil {
+		groupName = r.group.Name
+	}
+	groupDesc := fmt.Sprintf("member of rule group \"%s\"", groupName)
+	if groupName == "" {
+		groupDesc = "member of nameless rule group"
+	}
+	if capitalize {
+		if len(r.Method) > 2 {
+			r.Method = strings.ToUpper(r.Method[:1]) + strings.ToLower(r.Method[1:])
+		}
+	}
+	ruleDesc := fmt.Sprintf("%s rule \"%s\"", r.Method, r.Name)
+	if r.Name == "" {
+		ruleDesc = fmt.Sprintf("Nameless %s rule", r.Method)
+	}
+	return fmt.Sprintf("%s (%s)", ruleDesc, groupDesc)
 }

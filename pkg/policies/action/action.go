@@ -22,7 +22,6 @@ import (
 	"strings"
 
 	"github.com/ossf/allstar/pkg/config"
-	"github.com/ossf/allstar/pkg/config/operator"
 	"github.com/ossf/allstar/pkg/policydef"
 	"github.com/rhysd/actionlint"
 
@@ -35,53 +34,58 @@ const polName = "GitHub Actions"
 
 const maxWorkflows = 50
 
-var actionNameVersionRegex = regexp.MustCompile(`([a-zA-Z0-9_\-.]+\/[a-zA-Z0-9_\-.]+)@([a-zA-Z0-9.]+)`)
+var actionNameVersionRegex = regexp.MustCompile(`^([a-zA-Z0-9_\-.]+\/[a-zA-Z0-9_\-.]+)@([a-zA-Z0-9\-.]+)$`)
 
 const failText = "This policy, specified at the organization level, sets requirements for Action use by repos within the organization. This repo is failing to fully comply with organization policies, as explained below.\n\n```\n%s```\n\nSee the org-level %s policy configuration for details."
 const repoSelectorExcludeDepthLimit = 3
 
 // OrgConfig is the org-level config definition for Action Use
 type OrgConfig struct {
-	// OptConfig is the standard org-level opt in/out config, RepoOverride applies to all
-	// config.
-	OptConfig config.OrgOptConfig `json:"optConfig"`
-
 	// Action defines which action to take, default log, other: issue...
 	Action string `json:"action"`
 
-	// Rules is a priority-ordered list of Action Use rules
-	Rules []*Rule `json:"rules"`
+	// Groups is the set of RuleGroups to employ during Check.
+	// They are evaluated in order.
+	Groups []*RuleGroup `json:"groups"`
 }
 
-// RepoConfig is the repo-level config for Action Use
-type RepoConfig struct {
-	// OptConfig is the standard repo-level opt in/out config.
-	OptConfig config.RepoOptConfig `json:"optConfig"`
+// RuleGroup is used to apply rules to repos matched by RepoSelectors.
+type RuleGroup struct {
+	// Name is the name used to identify the RuleGroup.
+	Name string `json:"name"`
+
+	// Repos is the set of RepoSelectors to use when deciding whether a repo
+	// qualifies for this RuleGroup.
+	// if nil, select all repos.
+	Repos []*RepoSelector `json:"repos"`
+
+	// Rules is the set of rules to apply for this RuleGroup.
+	Rules []*Rule `json:"rules"`
 }
 
 // Rule is an Action Use rule
 type Rule struct {
+	// group references the RuleGroup to which this rule belongs
+	group *RuleGroup
+
 	// Name is the name used to identify the rule
 	Name string `json:"name"`
 
 	// Method is the type of rule. One of "require", "allow", and "deny".
 	Method string `json:"method"`
 
-	// Repo is a RepoSelector to which apply the rule.
-	// Use nil to apply to all repos.
-	Repo *RepoSelector `json:"repo"`
+	// Actions is a set of ActionSelectors.
+	// If nil, all Actions will be selected
+	Actions []*ActionSelector `json:"actions"`
 
 	// MustPass specifies whether the rule's Action(s) are required to
 	// be part of a passing workflow on latest commit
 	MustPass bool `json:"mustPass"`
 
-	// Count is the number of Actions listed to which a require rule
-	// applies
-	Count *int `json:"count"`
-
-	// Actions is a set of ActionSelectors.
-	// If nil, all Actions will be selected
-	Actions []*ActionSelector `json:"actions"`
+	// RequireAll specifies that all Actions listed should be required,
+	// rather than just one.
+	// [For use with "require" method]
+	RequireAll bool `json:"requireAll"`
 }
 
 // RepoSelector specifies a selection of repos
@@ -123,22 +127,17 @@ type actionMetadata struct {
 	workflowName     string
 }
 
-var doNothingOnOptOut = operator.DoNothingOnOptOut
-
 var configFetchConfig func(context.Context, *github.Client, string, string, string, config.ConfigLevel, interface{}) error
 
-var configIsEnabled func(ctx context.Context, o config.OrgOptConfig, orc, r config.RepoOptConfig, c *github.Client, owner, repo string) (bool, error)
-
 var listWorkflows func(ctx context.Context, c *github.Client, owner, repo string, on []string) ([]*workflowMetadata, error)
-var repoSelectorMatch func(rs *RepoSelector, ctx context.Context, c *github.Client, owner, repo string, excludeDepth int, gc globCache, sc semverCache) (bool, error)
+var listLanguages func(ctx context.Context, c *github.Client, owner, repo string) (map[string]int, error)
 var listWorkflowRunsByFilename func(ctx context.Context, c *github.Client, owner, repo string, workflowFilename string) ([]*github.WorkflowRun, error)
 var getLatestCommitHash func(ctx context.Context, c *github.Client, owner, repo string) (string, error)
 
 func init() {
 	configFetchConfig = config.FetchConfig
-	configIsEnabled = config.IsEnabled
 	listWorkflows = githubListWorkflows
-	repoSelectorMatch = githubRepoSelectorMatch
+	listLanguages = githubListLanguages
 	listWorkflowRunsByFilename = githubListWorkflowRunsByFilename
 	getLatestCommitHash = githubGetLatestCommitHash
 }
@@ -161,22 +160,16 @@ func (a Action) Name() string {
 // configuration stored in the org, implementing policydef.Policy.Check()
 func (a Action) Check(ctx context.Context, c *github.Client, owner,
 	repo string) (*policydef.Result, error) {
-	oc, orc, rc := getConfig(ctx, c, owner, repo)
-	enabled, err := configIsEnabled(ctx, oc.OptConfig, orc.OptConfig, rc.OptConfig, c, owner, repo)
-	if err != nil {
-		return nil, err
-	}
+	oc := getConfig(ctx, c, owner, repo)
+	enabled := oc.Groups != nil
 	log.Info().
 		Str("org", owner).
 		Str("repo", repo).
 		Str("area", polName).
 		Bool("enabled", enabled).
 		Msg("Check repo enabled")
-	if !enabled && doNothingOnOptOut || len(oc.Rules) < 1 {
-		// Don't run this policy if disabled and requested by operator. This is
-		// only checking enablement of policy, but not Allstar overall, this is
-		// ok for now.
-		// Also do nothing if no rules exist.
+	if !enabled {
+		// Don't run this policy if no rules exist.
 		return &policydef.Result{
 			Enabled:    enabled,
 			Pass:       true,
@@ -250,19 +243,32 @@ func (a Action) Check(ctx context.Context, c *github.Client, owner,
 
 	var applicableRules []*Rule
 
-	for _, r := range oc.Rules {
-		match, err := repoSelectorMatch(r.Repo, ctx, c, owner, repo, repoSelectorExcludeDepthLimit, gc, sc)
-		if err != nil {
-			log.Info().
-				Str("org", owner).
-				Str("repo", repo).
-				Str("area", polName).
-				Err(err).
-				Msg("Skipping rule with invalid RepoSelector")
-			continue
+	for _, g := range oc.Groups {
+		// Check if group match
+		groupMatch := false
+		for _, rs := range g.Repos {
+			// Ignore error while checking match. Match will be false on error.
+			match, err := rs.match(ctx, c, owner, repo, repoSelectorExcludeDepthLimit, gc, sc)
+
+			if err != nil {
+				log.Warn().
+					Str("org", owner).
+					Str("repo", repo).
+					Str("area", polName).
+					Err(err).
+					Msg("Skipping rule with invalid RepoSelector")
+			}
+
+			if match {
+				groupMatch = true
+				break
+			}
 		}
-		if match {
-			applicableRules = append(applicableRules, r)
+		if g.Repos == nil {
+			groupMatch = true
+		}
+		if groupMatch {
+			applicableRules = append(applicableRules, g.Rules...)
 		}
 	}
 
@@ -274,9 +280,19 @@ func (a Action) Check(ctx context.Context, c *github.Client, owner,
 	// Note: deny rules are evaluated Action-wise
 
 	for _, a := range actions {
-		denyResult, _ := evaluateActionDenied(applicableRules, a, gc, sc)
-		// errors can be ignored because they are all glob / version parse
-		// errors (user-created) and are reflected in denyResult steps
+		denyResult, errors := evaluateActionDenied(applicableRules, a, gc, sc)
+		// errors are all glob / version parse errors (user-created) and are
+		// reflected in denyResult steps
+
+		if errors != nil {
+			log.Error().
+				Str("org", owner).
+				Str("repo", repo).
+				Str("area", polName).
+				Str("action", a.name).
+				Errs("errors", errors).
+				Msg("Errors while evaluating deny rule.")
+		}
 
 		results = append(results, denyResult)
 	}
@@ -358,12 +374,117 @@ func (a Action) Fix(ctx context.Context, c *github.Client, owner, repo string) e
 // configuration stored in the org repo, default log. Implementing
 // policydef.Policy.GetAction()
 func (a Action) GetAction(ctx context.Context, c *github.Client, owner, repo string) string {
-	oc, _, _ := getConfig(ctx, c, owner, repo)
+	oc := getConfig(ctx, c, owner, repo)
 	return oc.Action
 }
 
+func getConfig(ctx context.Context, c *github.Client, owner, repo string) *OrgConfig {
+	oc := &OrgConfig{ // Fill out non-zero defaults
+		Action: "log",
+	}
+	if err := configFetchConfig(ctx, c, owner, "", configFile, config.OrgLevel, oc); err != nil {
+		log.Error().
+			Str("org", owner).
+			Str("repo", repo).
+			Str("configLevel", "orgLevel").
+			Str("area", polName).
+			Str("file", configFile).
+			Err(err).
+			Msg("Unexpected config error, using defaults.")
+	}
+	// Set each rule's group to its *RuleGroup
+	for _, g := range oc.Groups {
+		for _, r := range g.Rules {
+			r.group = g
+		}
+	}
+	return oc
+}
+
+func (as *ActionSelector) match(m *actionMetadata, gc globCache, sc semverCache) (match, matchName, matchVersion bool, err error) {
+	if as.Name != "" {
+		nameGlob, err := gc.compileGlob(as.Name)
+		if err != nil {
+			return false, false, false, err
+		}
+		if !nameGlob.Match(m.name) {
+			return false, false, false, nil
+		}
+	}
+	if as.Version == "" {
+		return true, true, true, nil
+	}
+	if as.Version == m.version {
+		return true, true, true, nil
+	}
+	if as.Version != "" {
+		constraint, err := sc.compileConstraints(as.Version)
+		if err != nil {
+			// on error, assume this is a ref
+			return false, true, false, nil
+		}
+		version, err := sc.compileVersion(m.version)
+		if err != nil {
+			return false, true, false, err
+		}
+		if !constraint.Check(version) {
+			return false, true, false, nil
+		}
+	}
+	return true, true, true, nil
+}
+
+// match checks if a repo matches a RepoSelector.
+// Set excludeDepth to > 0 for exclusion depth limit, or < 0 for no depth limit.
+func (rs *RepoSelector) match(ctx context.Context, c *github.Client, owner, repo string, excludeDepth int, gc globCache, sc semverCache) (bool, error) {
+	if rs == nil {
+		return true, nil
+	}
+	if rs.Name != "" {
+		ng, err := gc.compileGlob(rs.Name)
+		if err != nil {
+			return false, err
+		}
+		if !ng.Match(repo) {
+			return false, nil
+		}
+	}
+	if rs.Language != nil {
+		langs, err := listLanguages(ctx, c, owner, repo)
+		if err != nil {
+			return false, err
+		}
+		languageSatisfied := false
+		for l := range langs {
+			for _, sl := range rs.Language {
+				if strings.EqualFold(sl, l) {
+					languageSatisfied = true
+				}
+			}
+		}
+		if !languageSatisfied {
+			return false, nil
+		}
+	}
+	// Check if covered by exclusion case
+	if excludeDepth != 0 {
+		for _, exc := range rs.Exclude {
+			match, err := exc.match(ctx, c, owner, repo, excludeDepth-1, gc, sc)
+			if err != nil {
+				// API error? Ignore exclusion
+				continue
+			}
+			if match {
+				return false, nil
+			}
+		}
+	}
+	return true, nil
+}
+
 // githubGetLatestCommitHash gets the latest commit hash for a repo's default
-// branch using the GitHub API
+// branch using the GitHub API.
+// Relevant docs: https://docs.github.com/en/rest/commits/commits#list-commits
 func githubGetLatestCommitHash(ctx context.Context, c *github.Client, owner, repo string) (string, error) {
 	commits, _, err := c.Repositories.ListCommits(ctx, owner, repo, &github.CommitsListOptions{})
 	if err != nil {
@@ -375,8 +496,25 @@ func githubGetLatestCommitHash(ctx context.Context, c *github.Client, owner, rep
 	return "", fmt.Errorf("repo has no commits: %w", err)
 }
 
+// githubListWorkflowRunsByFilename returns workflow runs for a repo by workflow filename.
+// Docs: https://docs.github.com/en/rest/actions/workflow-runs#list-workflow-runs
+func githubListWorkflowRunsByFilename(ctx context.Context, c *github.Client, owner, repo string, workflowFilename string) ([]*github.WorkflowRun, error) {
+	runs, _, err := c.Actions.ListWorkflowRunsByFileName(ctx, owner, repo, workflowFilename, &github.ListWorkflowRunsOptions{
+		Event: "push",
+	})
+	return runs.WorkflowRuns, err
+}
+
+// githubListLanguages uses the GitHub API to list languages.
+// Docs: https://docs.github.com/en/rest/repos/repos#list-repository-languages
+func githubListLanguages(ctx context.Context, c *github.Client, owner, repo string) (map[string]int, error) {
+	l, _, err := c.Repositories.ListLanguages(ctx, owner, repo)
+	return l, err
+}
+
 // githubListWorkflows returns workflows for a repo. If on is specified, will
 // filter to workflows with all trigger events listed in on.
+// Relevant docs: https://docs.github.com/en/rest/repos/contents#get-repository-content
 func githubListWorkflows(ctx context.Context, c *github.Client, owner, repo string, on []string) ([]*workflowMetadata, error) {
 	_, workflowDirContents, resp, err := c.Repositories.GetContents(ctx, owner, repo, ".github/workflows", &github.RepositoryContentGetOptions{})
 	if err != nil {
@@ -473,133 +611,4 @@ func githubListWorkflows(ctx context.Context, c *github.Client, owner, repo stri
 		})
 	}
 	return workflows, nil
-}
-
-// githubListWorkflowRunsByFilename returns workflow runs for a repo by workflow filename
-func githubListWorkflowRunsByFilename(ctx context.Context, c *github.Client, owner, repo string, workflowFilename string) ([]*github.WorkflowRun, error) {
-	runs, _, err := c.Actions.ListWorkflowRunsByFileName(ctx, owner, repo, workflowFilename, &github.ListWorkflowRunsOptions{
-		Event: "push",
-	})
-
-	return runs.WorkflowRuns, err
-}
-
-func getConfig(ctx context.Context, c *github.Client, owner, repo string) (*OrgConfig, *RepoConfig, *RepoConfig) {
-	oc := &OrgConfig{ // Fill out non-zero defaults
-		Action: "log",
-	}
-	if err := configFetchConfig(ctx, c, owner, "", configFile, config.OrgLevel, oc); err != nil {
-		log.Error().
-			Str("org", owner).
-			Str("repo", repo).
-			Str("configLevel", "orgLevel").
-			Str("area", polName).
-			Str("file", configFile).
-			Err(err).
-			Msg("Unexpected config error, using defaults.")
-	}
-	orc := &RepoConfig{}
-	if err := configFetchConfig(ctx, c, owner, repo, configFile, config.OrgRepoLevel, orc); err != nil {
-		log.Error().
-			Str("org", owner).
-			Str("repo", repo).
-			Str("configLevel", "orgRepoLevel").
-			Str("area", polName).
-			Str("file", configFile).
-			Err(err).
-			Msg("Unexpected config error, using defaults.")
-	}
-	rc := &RepoConfig{}
-	if err := configFetchConfig(ctx, c, owner, repo, configFile, config.RepoLevel, rc); err != nil {
-		log.Error().
-			Str("org", owner).
-			Str("repo", repo).
-			Str("configLevel", "repoLevel").
-			Str("area", polName).
-			Str("file", configFile).
-			Err(err).
-			Msg("Unexpected config error, using defaults.")
-	}
-	return oc, orc, rc
-}
-
-func (as *ActionSelector) match(m *actionMetadata, gc globCache, sc semverCache) (match, matchName, matchVersion bool, err error) {
-	if as.Name != "" {
-		nameGlob, err := gc.compileGlob(as.Name)
-		if err != nil {
-			return false, false, false, err
-		}
-		if !nameGlob.Match(m.name) {
-			return false, false, false, nil
-		}
-	}
-	if as.Version == "" {
-		return true, true, true, nil
-	}
-	if as.Version == m.version {
-		return true, true, true, nil
-	}
-	if as.Version != "" {
-		constraint, err := sc.compileConstraints(as.Version)
-		if err != nil {
-			// on error, assume this is a ref
-			return false, true, false, nil
-		}
-		version, err := sc.compileVersion(m.version)
-		if err != nil {
-			return false, true, false, err
-		}
-		if !constraint.Check(version) {
-			return false, true, false, nil
-		}
-	}
-	return true, true, true, nil
-}
-
-// githubRepoSelectorMatch uses GitHub API while matching a repo using a RepoSelector.
-// Set excludeDepth to > 0 for exclusion depth limit, or < 0 for no depth limit.
-func githubRepoSelectorMatch(rs *RepoSelector, ctx context.Context, c *github.Client, owner, repo string, excludeDepth int, gc globCache, sc semverCache) (bool, error) {
-	if rs == nil {
-		return true, nil
-	}
-	if rs.Name != "" {
-		ng, err := gc.compileGlob(rs.Name)
-		if err != nil {
-			return false, err
-		}
-		if !ng.Match(repo) {
-			return false, nil
-		}
-	}
-	if rs.Language != nil {
-		langs, _, err := c.Repositories.ListLanguages(ctx, owner, repo)
-		if err != nil {
-			return false, err
-		}
-		languageSatisfied := false
-		for l := range langs {
-			for _, sl := range rs.Language {
-				if strings.EqualFold(sl, l) {
-					languageSatisfied = true
-				}
-			}
-		}
-		if !languageSatisfied {
-			return false, nil
-		}
-	}
-	// Check if covered by exclusion case
-	if excludeDepth != 0 {
-		for _, exc := range rs.Exclude {
-			match, err := githubRepoSelectorMatch(exc, ctx, c, owner, repo, excludeDepth-1, gc, sc)
-			if err != nil {
-				// API error? Ignore exclusion
-				continue
-			}
-			if match {
-				return false, nil
-			}
-		}
-	}
-	return true, nil
 }
