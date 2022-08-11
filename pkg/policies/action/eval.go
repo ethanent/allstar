@@ -22,7 +22,7 @@ import (
 )
 
 // evaluateActionDenied evaluates an Action against a set of Rules.
-func evaluateActionDenied(rules []*Rule, action *actionMetadata, gc globCache, sc semverCache) (*denyRuleEvaluationResult, []error) {
+func evaluateActionDenied(ctx context.Context, c *github.Client, rules []*Rule, action *actionMetadata, gc globCache, sc semverCache) (*denyRuleEvaluationResult, []error) {
 	result := &denyRuleEvaluationResult{
 		denied:         false,
 		actionMetadata: action,
@@ -41,7 +41,7 @@ func evaluateActionDenied(rules []*Rule, action *actionMetadata, gc globCache, s
 		case "require":
 			// check if action contained within allow or require
 			for _, a := range r.Actions {
-				match, matchName, _, err := a.match(action, gc, sc)
+				match, matchName, _, err := a.match(ctx, c, action, gc, sc)
 				if err != nil {
 					errs = append(errs, err)
 					stepResult.status = denyRuleStepStatusError
@@ -69,7 +69,7 @@ func evaluateActionDenied(rules []*Rule, action *actionMetadata, gc globCache, s
 				break
 			}
 			for _, a := range r.Actions {
-				match, _, _, err := a.match(action, gc, sc)
+				match, _, _, err := a.match(ctx, c, action, gc, sc)
 				if err != nil {
 					errs = append(errs, err)
 					stepResult.status = denyRuleStepStatusError
@@ -128,7 +128,7 @@ func evaluateRequireRule(ctx context.Context, c *github.Client, owner, repo stri
 		var suggestedFix *requireRuleEvaluationFix
 
 		for _, a := range actions {
-			match, matchName, _, err := ra.match(a, gc, sc)
+			match, matchName, _, err := ra.match(ctx, c, a, gc, sc)
 			if err != nil {
 				return nil, err
 			}

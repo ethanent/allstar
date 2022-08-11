@@ -35,6 +35,10 @@ func TestCheck(t *testing.T) {
 		}
 	}
 
+	strptr := func(s string) *string {
+		return &s
+	}
+
 	type testingWorkflowMetadata struct {
 		// File is the actual filename of the workflow to load.
 		// Will be loaded from test_workflows/ directory.
@@ -72,6 +76,9 @@ func TestCheck(t *testing.T) {
 		LatestCommitHash string
 
 		Langs map[string]int
+
+		// Releases is a map of "owner/repo" to []*github.RepositoryRelease
+		Releases map[string][]*github.RepositoryRelease
 
 		ExpectMessage []string
 		ExpectPass    bool
@@ -628,6 +635,83 @@ func TestCheck(t *testing.T) {
 			},
 			ExpectPass: true,
 		},
+		{
+			Name: "Require Action with semver constraint, but it is commit-pinned in repo",
+			Org: OrgConfig{
+				Action: "issue",
+				Groups: []*RuleGroup{
+					{
+						Name: "All repos",
+						Rules: []*Rule{
+							{
+								Name:   "Require some action",
+								Method: "require",
+								Actions: []*ActionSelector{
+									{
+										Name:    "some/action",
+										Version: ">= v1.0.0",
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+			Releases: map[string][]*github.RepositoryRelease{
+				"some/action": {
+					{
+						TagName:         strptr("v1.2.0"),
+						TargetCommitish: strptr("696c241da8ea301b3f1d2343c45c1e4aa38f90c7"),
+					},
+				},
+			},
+			Workflows: []testingWorkflowMetadata{
+				{
+					File: "version-pinned.yaml",
+				},
+			},
+			ExpectPass: true,
+		},
+		{
+			Name: "Require Action with semver constraint, and old version is commit-pinned in repo",
+			Org: OrgConfig{
+				Action: "issue",
+				Groups: []*RuleGroup{
+					{
+						Name: "All repos",
+						Rules: []*Rule{
+							{
+								Name:   "Require some action",
+								Method: "require",
+								Actions: []*ActionSelector{
+									{
+										Name:    "some/action",
+										Version: ">= v1.0.0",
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+			Releases: map[string][]*github.RepositoryRelease{
+				"some/action": {
+					{
+						TagName:         strptr("v0.9.0"),
+						TargetCommitish: strptr("696c241da8ea301b3f1d2343c45c1e4aa38f90c7"),
+					},
+				},
+			},
+			Workflows: []testingWorkflowMetadata{
+				{
+					File: "version-pinned.yaml",
+				},
+			},
+			ExpectPass: false,
+			ExpectMessage: []string{
+				`Update Action \"some/action\" to * ">= v1.0.0"`,
+			},
+		},
 	}
 
 	a := NewAction()
@@ -691,6 +775,16 @@ func TestCheck(t *testing.T) {
 
 			getLatestCommitHash = func(ctx context.Context, c *github.Client, owner, repo string) (string, error) {
 				return test.LatestCommitHash, nil
+			}
+
+			listReleases = func(ctx context.Context, c *github.Client, owner, repo string) ([]*github.RepositoryRelease, error) {
+				ownerRepo := fmt.Sprintf("%s/%s", owner, repo)
+				var releases []*github.RepositoryRelease
+				var ok bool
+				if releases, ok = test.Releases[ownerRepo]; !ok {
+					t.Fatalf("tried to find releases for \"%s\", they were not specified in test", ownerRepo)
+				}
+				return releases, nil
 			}
 
 			res, err := a.Check(context.Background(), nil, "thisorg", "thisrepo")

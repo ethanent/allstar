@@ -21,6 +21,7 @@ import (
 	"regexp"
 	"strings"
 
+	"github.com/Masterminds/semver/v3"
 	"github.com/ossf/allstar/pkg/config"
 	"github.com/ossf/allstar/pkg/policydef"
 	"github.com/rhysd/actionlint"
@@ -133,6 +134,7 @@ var listWorkflows func(ctx context.Context, c *github.Client, owner, repo string
 var listLanguages func(ctx context.Context, c *github.Client, owner, repo string) (map[string]int, error)
 var listWorkflowRunsByFilename func(ctx context.Context, c *github.Client, owner, repo string, workflowFilename string) ([]*github.WorkflowRun, error)
 var getLatestCommitHash func(ctx context.Context, c *github.Client, owner, repo string) (string, error)
+var listReleases func(ctx context.Context, c *github.Client, owner, repo string) ([]*github.RepositoryRelease, error)
 
 func init() {
 	configFetchConfig = config.FetchConfig
@@ -140,6 +142,7 @@ func init() {
 	listLanguages = githubListLanguages
 	listWorkflowRunsByFilename = githubListWorkflowRunsByFilename
 	getLatestCommitHash = githubGetLatestCommitHash
+	listReleases = githubListReleases
 }
 
 // Action is the Action Use policy object, implements policydef.Policy.
@@ -280,12 +283,12 @@ func (a Action) Check(ctx context.Context, c *github.Client, owner,
 	// Note: deny rules are evaluated Action-wise
 
 	for _, a := range actions {
-		denyResult, errors := evaluateActionDenied(applicableRules, a, gc, sc)
-		// errors are all glob / version parse errors (user-created) and are
-		// reflected in denyResult steps
+		denyResult, errors := evaluateActionDenied(ctx, c, applicableRules, a, gc, sc)
+		// errors are often parse errors (user-created) and are reflected in
+		// denyResult steps
 
 		if errors != nil {
-			log.Error().
+			log.Warn().
 				Str("org", owner).
 				Str("repo", repo).
 				Str("area", polName).
@@ -401,7 +404,33 @@ func getConfig(ctx context.Context, c *github.Client, owner, repo string) *OrgCo
 	return oc
 }
 
-func (as *ActionSelector) match(m *actionMetadata, gc globCache, sc semverCache) (match, matchName, matchVersion bool, err error) {
+// resolveVersion gets a *semver.Version given an actionMetadata.
+// It will use release tags of the Action repo if necessary.
+func resolveVersion(ctx context.Context, c *github.Client, m *actionMetadata, gc globCache, sc semverCache) (*semver.Version, error) {
+	version, err := sc.compileVersion(m.version)
+	if err == nil {
+		return version, nil
+	}
+	errPrefix := fmt.Sprintf("while resolving version for commit ref \"%s\" in repo \"%s\"", m.version, m.name)
+	// On error, attempt locate release tag (assume m.version is a commit ref)
+	ownerRepo := strings.Split(m.name, "/")
+	if len(ownerRepo) != 2 {
+		return nil, fmt.Errorf("%s: invalid name \"%s\"", errPrefix, m.name)
+	}
+	rels, err := listReleases(ctx, c, ownerRepo[0], ownerRepo[1])
+	if err != nil {
+		return nil, fmt.Errorf("%s: %w", errPrefix, err)
+	}
+	for _, rel := range rels {
+		if rel.GetTargetCommitish() == m.version {
+			version, err := sc.compileVersion(rel.GetTagName())
+			return version, err
+		}
+	}
+	return nil, fmt.Errorf("%s: no corresponding release found", errPrefix)
+}
+
+func (as *ActionSelector) match(ctx context.Context, c *github.Client, m *actionMetadata, gc globCache, sc semverCache) (match, matchName, matchVersion bool, err error) {
 	if as.Name != "" {
 		nameGlob, err := gc.compileGlob(as.Name)
 		if err != nil {
@@ -421,9 +450,10 @@ func (as *ActionSelector) match(m *actionMetadata, gc globCache, sc semverCache)
 		constraint, err := sc.compileConstraints(as.Version)
 		if err != nil {
 			// on error, assume this is a ref
+			// (we know it doesn't match because not equal above)
 			return false, true, false, nil
 		}
-		version, err := sc.compileVersion(m.version)
+		version, err := resolveVersion(ctx, c, m, gc, sc)
 		if err != nil {
 			return false, true, false, err
 		}
@@ -637,4 +667,14 @@ func githubListWorkflows(ctx context.Context, c *github.Client, owner, repo stri
 		})
 	}
 	return workflows, nil
+}
+
+// githubListReleases uses the GitHub API to list releases for a repo.
+// Docs: https://docs.github.com/en/rest/releases/releases#list-releases
+func githubListReleases(ctx context.Context, c *github.Client, owner, repo string) ([]*github.RepositoryRelease, error) {
+	releases, _, err := c.Repositories.ListReleases(ctx, owner, repo, &github.ListOptions{})
+	if err != nil {
+		return nil, err
+	}
+	return releases, nil
 }
