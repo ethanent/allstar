@@ -368,6 +368,9 @@ func (a Action) Check(ctx context.Context, c *github.Client, owner,
 	passing := true
 	combinedExplain := ""
 
+	// Use this map to dedupe Rules
+	failedRules := map[*Rule]struct{}{}
+
 	for _, result := range results {
 		if !result.passed() {
 			passing = false
@@ -375,8 +378,12 @@ func (a Action) Check(ctx context.Context, c *github.Client, owner,
 				combinedExplain += "\n"
 			}
 			combinedExplain += result.explain()
-			d.FailedRules = append(d.FailedRules, result.relevantRule())
+			failedRules[result.relevantRule()] = struct{}{}
 		}
+	}
+
+	for r, _ := range failedRules {
+		d.FailedRules = append(d.FailedRules, r)
 	}
 
 	notifyText := fmt.Sprintf(failText, combinedExplain, polName)

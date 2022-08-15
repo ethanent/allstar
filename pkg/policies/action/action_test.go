@@ -889,9 +889,14 @@ func TestCheck(t *testing.T) {
 				if d.FailedRules == nil {
 					t.Errorf("FailedRules nil")
 				}
-				for _, r := range d.FailedRules {
+				for i, r := range d.FailedRules {
 					if r == nil {
 						t.Errorf("nil Rule in FailedRules")
+					}
+					for i2, r2 := range d.FailedRules {
+						if i != i2 && r == r2 {
+							t.Errorf("duplicate Rule in FailedRules")
+						}
 					}
 				}
 			}
