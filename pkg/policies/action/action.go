@@ -709,6 +709,9 @@ func githubListWorkflows(ctx context.Context, c *github.Client, owner, repo stri
 				Errs("errors", errors).
 				Msg("Errors while parsing workflow file content.")
 		}
+		if wf == nil {
+			continue
+		}
 		// Filter if required trigger events specified
 		if on != nil {
 			allowByOnFilter := true

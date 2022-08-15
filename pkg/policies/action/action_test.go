@@ -797,6 +797,29 @@ func TestCheck(t *testing.T) {
 			},
 			ExpectPass: true,
 		},
+		{
+			Name: "Invalid workflow present",
+			Org: OrgConfig{
+				Action: "issue",
+				Groups: []*RuleGroup{
+					{
+						Rules: []*Rule{
+							{
+								Name:     "Allow all",
+								Method:   "allow",
+								Priority: "high",
+							},
+						},
+					},
+				},
+			},
+			Workflows: []testingWorkflowMetadata{
+				{
+					File: "invalid.yaml",
+				},
+			},
+			ExpectPass: true,
+		},
 	}
 
 	a := NewAction()
@@ -835,6 +858,10 @@ func TestCheck(t *testing.T) {
 						for _, er := range errs {
 							t.Logf("parse err: %s", er.Error())
 						}
+					}
+					if workflow == nil {
+						t.Logf("nil workflow")
+						continue
 					}
 					wfs = append(wfs, &workflowMetadata{
 						filename: w.File,
