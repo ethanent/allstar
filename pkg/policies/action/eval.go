@@ -40,6 +40,11 @@ func evaluateActionDenied(ctx context.Context, c *github.Client, rules []*Rule, 
 			fallthrough
 		case "require":
 			// check if action contained within allow or require
+			if r.Actions == nil {
+				// All Actions allowed by this step
+				stepResult.status = denyRuleStepStatusAllowed
+				break
+			}
 			for _, a := range r.Actions {
 				match, matchName, _, err := a.match(ctx, c, action, gc, sc)
 				if err != nil {

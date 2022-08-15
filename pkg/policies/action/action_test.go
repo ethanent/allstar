@@ -712,6 +712,91 @@ func TestCheck(t *testing.T) {
 				`Update Action \"some/action\" to * ">= v1.0.0"`,
 			},
 		},
+		{
+			Name: "Deny higher priority than allow",
+			Org: OrgConfig{
+				Action: "issue",
+				Groups: []*RuleGroup{
+					{
+						Rules: []*Rule{
+							{
+								Name:     "Allow all",
+								Method:   "allow",
+								Priority: "medium",
+							},
+							{
+								Name:     "Deny all",
+								Method:   "deny",
+								Priority: "high",
+							},
+						},
+					},
+				},
+			},
+			Workflows: []testingWorkflowMetadata{
+				{
+					File: "basic.yaml",
+				},
+			},
+			ExpectPass:    false,
+			ExpectMessage: []string{"denied by deny rule \"Deny all\""},
+		},
+		{
+			Name: "Deny same priority as allow",
+			Org: OrgConfig{
+				Action: "issue",
+				Groups: []*RuleGroup{
+					{
+						Rules: []*Rule{
+							{
+								Name:     "Allow all",
+								Method:   "allow",
+								Priority: "high",
+							},
+							{
+								Name:     "Deny all",
+								Method:   "deny",
+								Priority: "high",
+							},
+						},
+					},
+				},
+			},
+			Workflows: []testingWorkflowMetadata{
+				{
+					File: "basic.yaml",
+				},
+			},
+			ExpectPass: true,
+		},
+		{
+			Name: "Deny lower priority than allow",
+			Org: OrgConfig{
+				Action: "issue",
+				Groups: []*RuleGroup{
+					{
+						Rules: []*Rule{
+							{
+								Name:     "Allow all",
+								Method:   "allow",
+								Priority: "high",
+							},
+							{
+								Name:     "Deny all",
+								Method:   "deny",
+								Priority: "low",
+							},
+						},
+					},
+				},
+			},
+			Workflows: []testingWorkflowMetadata{
+				{
+					File: "basic.yaml",
+				},
+			},
+			ExpectPass: true,
+		},
 	}
 
 	a := NewAction()

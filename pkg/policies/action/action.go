@@ -19,6 +19,7 @@ import (
 	"context"
 	"fmt"
 	"regexp"
+	"sort"
 	"strings"
 
 	"github.com/Masterminds/semver/v3"
@@ -39,6 +40,13 @@ var actionNameVersionRegex = regexp.MustCompile(`^([a-zA-Z0-9_\-.]+\/[a-zA-Z0-9_
 
 const failText = "This policy, specified at the organization level, sets requirements for Action use by repos within the organization. This repo is failing to fully comply with organization policies, as explained below.\n\n```\n%s```\n\nSee the org-level %s policy configuration for details."
 const repoSelectorExcludeDepthLimit = 3
+
+var priorities = map[string]int{
+	"critical": 0,
+	"high":     1,
+	"medium":   2,
+	"low":      3,
+}
 
 // OrgConfig is the org-level config definition for Action Use
 type OrgConfig struct {
@@ -66,14 +74,15 @@ type RuleGroup struct {
 
 // Rule is an Action Use rule
 type Rule struct {
-	// group references the RuleGroup to which this rule belongs
-	group *RuleGroup
-
 	// Name is the name used to identify the rule
 	Name string `json:"name"`
 
 	// Method is the type of rule. One of "require", "allow", and "deny".
 	Method string `json:"method"`
+
+	// Priority is the priority tier identifier applied to the rule.
+	// Options are "urgent", "high", "medium", and "low"
+	Priority string `json:"priority"`
 
 	// Actions is a set of ActionSelectors.
 	// If nil, all Actions will be selected
@@ -87,6 +96,13 @@ type Rule struct {
 	// rather than just one.
 	// [For use with "require" method]
 	RequireAll bool `json:"requireAll"`
+
+	// group references the RuleGroup to which this rule belongs
+	group *RuleGroup
+
+	// priorityInt is an int corresponding to Priority.
+	// Lower number = higher priority
+	priorityInt int
 }
 
 // RepoSelector specifies a selection of repos
@@ -144,6 +160,9 @@ func init() {
 	getLatestCommitHash = githubGetLatestCommitHash
 	listReleases = githubListReleases
 }
+
+// sortableRules is a sortable list of *Rule
+type sortableRules []*Rule
 
 // Action is the Action Use policy object, implements policydef.Policy.
 type Action bool
@@ -244,7 +263,7 @@ func (a Action) Check(ctx context.Context, c *github.Client, owner,
 
 	// Determine applicable rules
 
-	var applicableRules []*Rule
+	var applicableRules sortableRules
 
 	for _, g := range oc.Groups {
 		// Check if group match
@@ -274,6 +293,11 @@ func (a Action) Check(ctx context.Context, c *github.Client, owner,
 			applicableRules = append(applicableRules, g.Rules...)
 		}
 	}
+
+	// Sort rules into priority order
+	// First by priority, second by method with require/allow before deny
+
+	sort.Sort(applicableRules)
 
 	// Evaluate rules using index
 
@@ -396,9 +420,18 @@ func getConfig(ctx context.Context, c *github.Client, owner, repo string) *OrgCo
 			Msg("Unexpected config error, using defaults.")
 	}
 	// Set each rule's group to its *RuleGroup
+	// Set each rule's priorityInt to an int corresponding to its Priority
 	for _, g := range oc.Groups {
 		for _, r := range g.Rules {
 			r.group = g
+			if p, ok := priorities[r.Priority]; ok {
+				r.priorityInt = p
+			} else {
+				r.priorityInt, ok = priorities["medium"]
+				if !ok {
+					r.priorityInt = 2
+				}
+			}
 		}
 	}
 	return oc
@@ -536,6 +569,30 @@ func languageSatisfied(langs map[string]int, want []string) bool {
 	}
 
 	return false
+}
+
+// Len returns number of rules in s
+func (s sortableRules) Len() int {
+	return len(s)
+}
+
+// Less returns i < j, determined by Priority and Method so that priority tiers
+// are honored and allow/require is evaluated before deny.
+func (s sortableRules) Less(i, j int) bool {
+	if s[i].priorityInt < s[j].priorityInt {
+		return true
+	}
+	if s[i].Method != "deny" {
+		return true
+	}
+	return false
+}
+
+// Swap swaps the Rules at indices i and j
+func (s sortableRules) Swap(i, j int) {
+	hold := s[i]
+	s[i] = s[j]
+	s[j] = hold
 }
 
 // githubGetLatestCommitHash gets the latest commit hash for a repo's default
