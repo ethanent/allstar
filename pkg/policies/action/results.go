@@ -21,11 +21,15 @@ import (
 
 // ruleEvaluationResult represents a result of evaluating a rule.
 type ruleEvaluationResult interface {
-	// passed specifies whether the rule evaluation yielded an OK result.
+	// passed specifies whether the rule evaluation yielded an OK result
 	passed() bool
 
-	// explain provides a string explanation for the outcome of the evaluation.
+	// explain provides a string explanation for the outcome of the evaluation
 	explain() string
+
+	// relevantRule returns a key Rule to the result, if any.
+	// Should always be non-nil on passed = false
+	relevantRule() *Rule
 }
 
 // denyRuleEvaluationResult represents the result of a deny rule evaluation on
@@ -34,7 +38,7 @@ type denyRuleEvaluationResult struct {
 	// denied specifies whether the Action was denied.
 	denied bool
 
-	// denyingRule is the rule which denied the Action, or "" if not
+	// denyingRule is the rule which denied the Action, or nil if not
 	// denied.
 	denyingRule *Rule
 
@@ -91,6 +95,10 @@ func (de *denyRuleEvaluationResult) explain() string {
 		s += fmt.Sprintf("-> %s\n", stepResult.string())
 	}
 	return s
+}
+
+func (de *denyRuleEvaluationResult) relevantRule() *Rule {
+	return de.denyingRule
 }
 
 // string returns the string representation of this step
@@ -161,6 +169,10 @@ func (re *requireRuleEvaluationResult) explain() string {
 		s += fmt.Sprintf("     - %s\n", fix.string())
 	}
 	return s
+}
+
+func (re *requireRuleEvaluationResult) relevantRule() *Rule {
+	return re.rule
 }
 
 func (rf *requireRuleEvaluationFix) string() string {

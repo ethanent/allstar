@@ -132,6 +132,7 @@ type ActionSelector struct {
 }
 
 type details struct {
+	FailedRules []*Rule
 }
 
 type workflowMetadata struct {
@@ -362,6 +363,8 @@ func (a Action) Check(ctx context.Context, c *github.Client, owner,
 		}
 	}
 
+	d := details{}
+
 	passing := true
 	combinedExplain := ""
 
@@ -372,6 +375,7 @@ func (a Action) Check(ctx context.Context, c *github.Client, owner,
 				combinedExplain += "\n"
 			}
 			combinedExplain += result.explain()
+			d.FailedRules = append(d.FailedRules, result.relevantRule())
 		}
 	}
 
@@ -385,7 +389,7 @@ func (a Action) Check(ctx context.Context, c *github.Client, owner,
 		Enabled:    enabled,
 		Pass:       passing,
 		NotifyText: notifyText,
-		Details:    details{},
+		Details:    d,
 	}, nil
 }
 

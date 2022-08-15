@@ -884,6 +884,18 @@ func TestCheck(t *testing.T) {
 				t.Errorf("Expect pass = %t, got pass = %t", test.ExpectPass, res.Pass)
 			}
 
+			if !res.Pass {
+				d := res.Details.(details)
+				if d.FailedRules == nil {
+					t.Errorf("FailedRules nil")
+				}
+				for _, r := range d.FailedRules {
+					if r == nil {
+						t.Errorf("nil Rule in FailedRules")
+					}
+				}
+			}
+
 			for _, message := range test.ExpectMessage {
 				comp, err := glob.Compile("*" + message + "*")
 				if err != nil {
