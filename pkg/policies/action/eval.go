@@ -21,7 +21,7 @@ import (
 	"github.com/google/go-github/v43/github"
 )
 
-// evaluateActionDenied evaluates an Action against a set of Rules.
+// evaluateActionDenied evaluates an Action against a set of Rules
 func evaluateActionDenied(ctx context.Context, c *github.Client, rules []*Rule, action *actionMetadata, gc globCache, sc semverCache) (*denyRuleEvaluationResult, []error) {
 	result := &denyRuleEvaluationResult{
 		denied:         false,
@@ -39,7 +39,7 @@ func evaluateActionDenied(ctx context.Context, c *github.Client, rules []*Rule, 
 		case "allow":
 			fallthrough
 		case "require":
-			// check if action contained within allow or require
+			// Check if Action contained within allow or require
 			if r.Actions == nil {
 				// All Actions allowed by this step
 				stepResult.status = denyRuleStepStatusAllowed
@@ -61,12 +61,12 @@ func evaluateActionDenied(ctx context.Context, c *github.Client, rules []*Rule, 
 					stepResult.status = denyRuleStepStatusMissingAction
 					continue
 				}
-				// this is a permissible Action
+				// This is a permissible Action
 				stepResult.status = denyRuleStepStatusAllowed
 				break
 			}
 		case "deny":
-			// check if Action is denied
+			// Check if Action is denied
 			if r.Actions == nil {
 				stepResult.status = denyRuleStepStatusDenied
 				result.denied = true
@@ -95,7 +95,7 @@ func evaluateActionDenied(ctx context.Context, c *github.Client, rules []*Rule, 
 		}
 		result.steps = append(result.steps, stepResult)
 		if len(result.steps) > 0 {
-			// exit if previous step has specifically allowed or denied the Action.
+			// Exit if previous step has specifically allowed or denied the Action.
 			lastStatus := result.steps[len(result.steps)-1].status
 			if lastStatus == denyRuleStepStatusAllowed || lastStatus == denyRuleStepStatusDenied {
 				break
@@ -127,7 +127,7 @@ func evaluateRequireRule(ctx context.Context, c *github.Client, owner, repo stri
 	}
 
 	for _, ra := range rule.Actions {
-		// check if this rule is satisfied
+		// Check if this rule is satisfied
 
 		satisfied := false
 		var suggestedFix *requireRuleEvaluationFix
@@ -139,7 +139,7 @@ func evaluateRequireRule(ctx context.Context, c *github.Client, owner, repo stri
 			}
 			if !match {
 				if matchName {
-					// version mismatch
+					// Version mismatch
 					suggestedFix = &requireRuleEvaluationFix{
 						fixMethod:               requireRuleEvaluationFixMethodUpdate,
 						actionName:              a.name,
@@ -147,7 +147,7 @@ func evaluateRequireRule(ctx context.Context, c *github.Client, owner, repo stri
 					}
 					break
 				}
-				// name mismatch, keep looking
+				// Name mismatch, keep looking
 				continue
 			}
 
@@ -181,7 +181,7 @@ func evaluateRequireRule(ctx context.Context, c *github.Client, owner, repo stri
 				}
 			}
 
-			// satisfied!
+			// Satisfied!
 			satisfied = true
 			break
 		}
@@ -191,7 +191,7 @@ func evaluateRequireRule(ctx context.Context, c *github.Client, owner, repo stri
 			continue
 		}
 
-		// not passing due to missing Action, add add fix suggestion
+		// Not passing due to missing Action, add "add" fix suggestion
 
 		if suggestedFix == nil {
 			suggestedFix = &requireRuleEvaluationFix{

@@ -90,7 +90,7 @@ func (de *denyRuleEvaluationResult) explain() string {
 	} else {
 		s = fmt.Sprintf("Action \"%s\" version %s did not hit a deny rule.\n", de.actionMetadata.name, de.actionMetadata.version)
 	}
-	// add step results
+	// Add step results
 	for _, stepResult := range de.steps {
 		s += fmt.Sprintf("-> %s\n", stepResult.string())
 	}

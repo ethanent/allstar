@@ -238,7 +238,7 @@ func (a Action) Check(ctx context.Context, c *github.Client, owner,
 				}
 				sm := actionNameVersionRegex.FindStringSubmatch(actionStep.Uses.Value)
 				if sm == nil {
-					// ignore invalid Action
+					// Ignore invalid Action
 					log.Info().
 						Str("org", owner).
 						Str("repo", repo).
@@ -432,11 +432,12 @@ func getConfig(ctx context.Context, c *github.Client, owner, repo string) *OrgCo
 			Err(err).
 			Msg("Unexpected config error, using defaults.")
 	}
-	// Set each rule's group to its *RuleGroup
-	// Set each rule's priorityInt to an int corresponding to its Priority
+	// Initialize values in each rule
 	for _, g := range oc.Groups {
 		for _, r := range g.Rules {
+			// Set each rule's group to its *RuleGroup
 			r.group = g
+			// Set each rule's priorityInt to an int corresponding to Priority
 			if p, ok := priorities[r.Priority]; ok {
 				r.priorityInt = p
 			} else {
@@ -476,6 +477,7 @@ func resolveVersion(ctx context.Context, c *github.Client, m *actionMetadata, gc
 	return nil, fmt.Errorf("%s: no corresponding release found", errPrefix)
 }
 
+// match checks if an ActionSelector matches an actionMetadata.
 func (as *ActionSelector) match(ctx context.Context, c *github.Client, m *actionMetadata, gc globCache, sc semverCache) (match, matchName, matchVersion bool, err error) {
 	if as.Name != "" {
 		nameGlob, err := gc.compileGlob(as.Name)
@@ -610,7 +612,7 @@ func (s sortableRules) Swap(i, j int) {
 
 // githubGetLatestCommitHash gets the latest commit hash for a repo's default
 // branch using the GitHub API.
-// Relevant docs: https://docs.github.com/en/rest/commits/commits#list-commits
+// Docs: https://docs.github.com/en/rest/commits/commits#list-commits
 func githubGetLatestCommitHash(ctx context.Context, c *github.Client, owner, repo string) (string, error) {
 	commits, _, err := c.Repositories.ListCommits(ctx, owner, repo, &github.CommitsListOptions{})
 	if err != nil {
@@ -622,8 +624,10 @@ func githubGetLatestCommitHash(ctx context.Context, c *github.Client, owner, rep
 	return "", fmt.Errorf("repo has no commits: %w", err)
 }
 
-// githubListWorkflowRunsByFilename returns workflow runs for a repo by workflow filename.
-// Docs: https://docs.github.com/en/rest/actions/workflow-runs#list-workflow-runs
+// githubListWorkflowRunsByFilename returns workflow runs for a repo by
+// workflow filename.
+// Docs:
+// https://docs.github.com/en/rest/actions/workflow-runs#list-workflow-runs
 func githubListWorkflowRunsByFilename(ctx context.Context, c *github.Client, owner, repo string, workflowFilename string) ([]*github.WorkflowRun, error) {
 	runs, _, err := c.Actions.ListWorkflowRunsByFileName(ctx, owner, repo, workflowFilename, &github.ListWorkflowRunsOptions{
 		Event: "push",
@@ -640,7 +644,7 @@ func githubListLanguages(ctx context.Context, c *github.Client, owner, repo stri
 
 // githubListWorkflows returns workflows for a repo. If on is specified, will
 // filter to workflows with all trigger events listed in on.
-// Relevant docs: https://docs.github.com/en/rest/repos/contents#get-repository-content
+// Docs: https://docs.github.com/en/rest/repos/contents#get-repository-content
 func githubListWorkflows(ctx context.Context, c *github.Client, owner, repo string, on []string) ([]*workflowMetadata, error) {
 	_, workflowDirContents, resp, err := c.Repositories.GetContents(ctx, owner, repo, ".github/workflows", &github.RepositoryContentGetOptions{})
 	if err != nil {
