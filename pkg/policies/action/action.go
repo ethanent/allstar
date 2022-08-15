@@ -69,6 +69,8 @@ type RuleGroup struct {
 	Repos []*RepoSelector `json:"repos"`
 
 	// Rules is the set of rules to apply for this RuleGroup.
+	// Rules are applied in order of priority, with allow/require rules
+	// evaluated before deny rules at each priority tier.
 	Rules []*Rule `json:"rules"`
 }
 
