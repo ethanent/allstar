@@ -34,11 +34,11 @@ import (
 const configFile = "actions.yaml"
 const polName = "GitHub Actions"
 
-const maxWorkflows = 50
-
 var actionNameVersionRegex = regexp.MustCompile(`^([a-zA-Z0-9_\-.]+\/[a-zA-Z0-9_\-.]+)@([a-zA-Z0-9\-.]+)$`)
 
 const failText = "This policy, specified at the organization level, sets requirements for Action use by repos within the organization. This repo is failing to fully comply with organization policies, as explained below.\n\n```\n%s```\n\nSee the org-level %s policy configuration for details."
+
+const maxWorkflows = 50
 const repoSelectorExcludeDepthLimit = 3
 
 var priorities = map[string]int{
