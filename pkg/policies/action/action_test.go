@@ -648,7 +648,7 @@ func TestCheck(t *testing.T) {
 								Method: "require",
 								Actions: []*ActionSelector{
 									{
-										Name:    "some/action",
+										Name:    "ossf/test-action",
 										Version: ">= v1.0.0",
 									},
 								},
@@ -658,7 +658,7 @@ func TestCheck(t *testing.T) {
 				},
 			},
 			Releases: map[string][]*github.RepositoryRelease{
-				"some/action": {
+				"ossf/test-action": {
 					{
 						TagName:         strptr("v1.2.0"),
 						TargetCommitish: strptr("696c241da8ea301b3f1d2343c45c1e4aa38f90c7"),
@@ -685,7 +685,7 @@ func TestCheck(t *testing.T) {
 								Method: "require",
 								Actions: []*ActionSelector{
 									{
-										Name:    "some/action",
+										Name:    "ossf/test-action",
 										Version: ">= v1.0.0",
 									},
 								},
@@ -695,7 +695,7 @@ func TestCheck(t *testing.T) {
 				},
 			},
 			Releases: map[string][]*github.RepositoryRelease{
-				"some/action": {
+				"ossf/test-action": {
 					{
 						TagName:         strptr("v0.9.0"),
 						TargetCommitish: strptr("696c241da8ea301b3f1d2343c45c1e4aa38f90c7"),
@@ -709,7 +709,7 @@ func TestCheck(t *testing.T) {
 			},
 			ExpectPass: false,
 			ExpectMessage: []string{
-				`Update Action \"some/action\" to * ">= v1.0.0"`,
+				`Update Action \"ossf/test-action\" to * ">= v1.0.0"`,
 			},
 		},
 		{
@@ -819,6 +819,36 @@ func TestCheck(t *testing.T) {
 				},
 			},
 			ExpectPass: true,
+		},
+		{
+			Name: "Invalid workflow present along with workflow with denied Action",
+			Org: OrgConfig{
+				Action: "issue",
+				Groups: []*RuleGroup{
+					{
+						Rules: []*Rule{
+							{
+								Name:   "Deny ossf/test-action",
+								Method: "deny",
+								Actions: []*ActionSelector{
+									{
+										Name: "ossf/test-action",
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+			Workflows: []testingWorkflowMetadata{
+				{
+					File: "invalid.yaml",
+				},
+				{
+					File: "version-pinned.yaml",
+				},
+			},
+			ExpectPass: false,
 		},
 	}
 
