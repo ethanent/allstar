@@ -672,6 +672,10 @@ func listLanguagesReal(ctx context.Context, c *github.Client, owner, repo string
 // filter to workflows with all trigger events listed in on.
 // Docs: https://docs.github.com/en/rest/repos/contents#get-repository-content
 func listWorkflowsReal(ctx context.Context, c *github.Client, owner, repo string) ([]*workflowMetadata, error) {
+	// TODO add cacheable walk to workflows dir here.
+	// See pkg/config/contents.go for similar. The difference here is getting
+	// dir rather than file contents. Could be nice to modify config's
+	// implementation and make it public for use here.
 	_, workflowDirContents, resp, err := c.Repositories.GetContents(ctx, owner, repo, ".github/workflows", &github.RepositoryContentGetOptions{})
 	if err != nil {
 		if resp.StatusCode == 404 {
