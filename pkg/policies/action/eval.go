@@ -22,7 +22,7 @@ import (
 )
 
 // evaluateActionDenied evaluates an Action against a set of Rules
-func evaluateActionDenied(ctx context.Context, c *github.Client, rules []*Rule, action *actionMetadata, gc globCache, sc semverCache) (*denyRuleEvaluationResult, []error) {
+func evaluateActionDenied(ctx context.Context, c *github.Client, rules []*internalRule, action *actionMetadata, gc globCache, sc semverCache) (*denyRuleEvaluationResult, []error) {
 	result := &denyRuleEvaluationResult{
 		denied:         false,
 		actionMetadata: action,
@@ -107,7 +107,7 @@ func evaluateActionDenied(ctx context.Context, c *github.Client, rules []*Rule, 
 }
 
 // evaluateRequireRule evaluates a require rule against a set of Actions
-func evaluateRequireRule(ctx context.Context, c *github.Client, owner, repo string, rule *Rule,
+func evaluateRequireRule(ctx context.Context, c *github.Client, owner, repo string, rule *internalRule,
 	actions []*actionMetadata, headSHA string, gc globCache, sc semverCache) (*requireRuleEvaluationResult, error) {
 	if rule.Method != "require" {
 		return nil, fmt.Errorf("rule is not a require rule")

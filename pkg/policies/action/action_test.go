@@ -856,14 +856,6 @@ func TestCheck(t *testing.T) {
 
 	for _, test := range tests {
 		t.Run(test.Name, func(t *testing.T) {
-			// Set rule group to each rule's group
-
-			for _, g := range test.Org.Groups {
-				for _, r := range g.Rules {
-					r.group = g
-				}
-			}
-
 			// Override external functions
 
 			configFetchConfig = func(ctx context.Context, c *github.Client, owner, repo, path string,

@@ -98,13 +98,6 @@ type Rule struct {
 	// rather than just one.
 	// [For use with "require" method]
 	RequireAll bool `json:"requireAll"`
-
-	// group references the RuleGroup to which this rule belongs
-	group *RuleGroup
-
-	// priorityInt is an int corresponding to Priority.
-	// Lower number = higher priority
-	priorityInt int
 }
 
 // RepoSelector specifies a selection of repos
@@ -147,6 +140,28 @@ type actionMetadata struct {
 	workflowName     string
 }
 
+// internalRuleGroup is a RuleGroup using internalRule
+type internalRuleGroup struct {
+	*RuleGroup
+
+	// Rules is the set of rules to apply for this RuleGroup.
+	// Rules are applied in order of priority, with allow/require rules
+	// evaluated before deny rules at each priority tier.
+	Rules []*internalRule `json:"rules"`
+}
+
+// internalRule is an Action Use rule with added internal fields
+type internalRule struct {
+	*Rule
+
+	// group references the RuleGroup to which this rule belongs
+	group *RuleGroup
+
+	// priorityInt is an int corresponding to Priority.
+	// Lower value = higher priority
+	priorityInt int
+}
+
 var configFetchConfig func(context.Context, *github.Client, string, string, string, config.ConfigLevel, interface{}) error
 
 var listWorkflows func(ctx context.Context, c *github.Client, owner, repo string, on []string) ([]*workflowMetadata, error)
@@ -165,7 +180,7 @@ func init() {
 }
 
 // sortableRules is a sortable list of *Rule
-type sortableRules []*Rule
+type sortableRules []*internalRule
 
 // Action is the Action Use policy object, implements policydef.Policy.
 type Action bool
@@ -185,8 +200,8 @@ func (a Action) Name() string {
 // configuration stored in the org, implementing policydef.Policy.Check()
 func (a Action) Check(ctx context.Context, c *github.Client, owner,
 	repo string) (*policydef.Result, error) {
-	oc := getConfig(ctx, c, owner, repo)
-	enabled := oc.Groups != nil
+	_, groups := getConfig(ctx, c, owner, repo)
+	enabled := groups != nil
 	log.Info().
 		Str("org", owner).
 		Str("repo", repo).
@@ -268,7 +283,7 @@ func (a Action) Check(ctx context.Context, c *github.Client, owner,
 
 	var applicableRules sortableRules
 
-	for _, g := range oc.Groups {
+	for _, g := range groups {
 		// Check if group match
 		groupMatch := false
 		for _, rs := range g.Repos {
@@ -369,7 +384,7 @@ func (a Action) Check(ctx context.Context, c *github.Client, owner,
 	combinedExplain := ""
 
 	// Use this map to dedupe Rules
-	failedRules := map[*Rule]struct{}{}
+	failedRules := map[*internalRule]struct{}{}
 
 	for _, result := range results {
 		if !result.passed() {
@@ -383,7 +398,7 @@ func (a Action) Check(ctx context.Context, c *github.Client, owner,
 	}
 
 	for r, _ := range failedRules {
-		d.FailedRules = append(d.FailedRules, r)
+		d.FailedRules = append(d.FailedRules, r.Rule)
 	}
 
 	notifyText := fmt.Sprintf(failText, combinedExplain, polName)
@@ -414,11 +429,11 @@ func (a Action) Fix(ctx context.Context, c *github.Client, owner, repo string) e
 // configuration stored in the org repo, default log. Implementing
 // policydef.Policy.GetAction()
 func (a Action) GetAction(ctx context.Context, c *github.Client, owner, repo string) string {
-	oc := getConfig(ctx, c, owner, repo)
-	return oc.Action
+	action, _ := getConfig(ctx, c, owner, repo)
+	return action
 }
 
-func getConfig(ctx context.Context, c *github.Client, owner, repo string) *OrgConfig {
+func getConfig(ctx context.Context, c *github.Client, owner, repo string) (action string, rules []*internalRuleGroup) {
 	oc := &OrgConfig{ // Fill out non-zero defaults
 		Action: "log",
 	}
@@ -432,23 +447,31 @@ func getConfig(ctx context.Context, c *github.Client, owner, repo string) *OrgCo
 			Err(err).
 			Msg("Unexpected config error, using defaults.")
 	}
+	var gs []*internalRuleGroup
 	// Initialize values in each rule
 	for _, g := range oc.Groups {
+		ig := &internalRuleGroup{
+			RuleGroup: g,
+			Rules:     nil,
+		}
 		for _, r := range g.Rules {
+			ir := &internalRule{Rule: r}
 			// Set each rule's group to its *RuleGroup
-			r.group = g
+			ir.group = g
 			// Set each rule's priorityInt to an int corresponding to Priority
 			if p, ok := priorities[r.Priority]; ok {
-				r.priorityInt = p
+				ir.priorityInt = p
 			} else {
-				r.priorityInt, ok = priorities["medium"]
+				ir.priorityInt, ok = priorities["medium"]
 				if !ok {
-					r.priorityInt = 2
+					ir.priorityInt = 2
 				}
 			}
+			ig.Rules = append(ig.Rules, ir)
 		}
+		gs = append(gs, ig)
 	}
-	return oc
+	return oc.Action, gs
 }
 
 // resolveVersion gets a *semver.Version given an actionMetadata.
