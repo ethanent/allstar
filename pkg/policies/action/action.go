@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-// Package actionuse implements the Interactions security policy.
+// Package action implements the GitHub Actions security policy.
 package action
 
 import (
@@ -173,11 +173,11 @@ var listReleases func(ctx context.Context, c *github.Client, owner, repo string)
 
 func init() {
 	configFetchConfig = config.FetchConfig
-	listWorkflows = githubListWorkflows
-	listLanguages = githubListLanguages
-	listWorkflowRunsByFilename = githubListWorkflowRunsByFilename
-	getLatestCommitHash = githubGetLatestCommitHash
-	listReleases = githubListReleases
+	listWorkflows = listWorkflowsReal
+	listLanguages = listLanguagesReal
+	listWorkflowRunsByFilename = listWorkflowRunsByFilenameReal
+	getLatestCommitHash = getLatestCommitHashReal
+	listReleases = listReleasesReal
 }
 
 // sortableRules is a sortable list of *Rule
@@ -636,10 +636,10 @@ func (s sortableRules) Swap(i, j int) {
 	s[j] = hold
 }
 
-// githubGetLatestCommitHash gets the latest commit hash for a repo's default
+// getLatestCommitHashReal gets the latest commit hash for a repo's default
 // branch using the GitHub API.
 // Docs: https://docs.github.com/en/rest/commits/commits#list-commits
-func githubGetLatestCommitHash(ctx context.Context, c *github.Client, owner, repo string) (string, error) {
+func getLatestCommitHashReal(ctx context.Context, c *github.Client, owner, repo string) (string, error) {
 	commits, _, err := c.Repositories.ListCommits(ctx, owner, repo, &github.CommitsListOptions{})
 	if err != nil {
 		return "", err
@@ -650,28 +650,28 @@ func githubGetLatestCommitHash(ctx context.Context, c *github.Client, owner, rep
 	return "", fmt.Errorf("repo has no commits: %w", err)
 }
 
-// githubListWorkflowRunsByFilename returns workflow runs for a repo by
+// listWorkflowRunsByFilenameReal returns workflow runs for a repo by
 // workflow filename.
 // Docs:
 // https://docs.github.com/en/rest/actions/workflow-runs#list-workflow-runs
-func githubListWorkflowRunsByFilename(ctx context.Context, c *github.Client, owner, repo string, workflowFilename string) ([]*github.WorkflowRun, error) {
+func listWorkflowRunsByFilenameReal(ctx context.Context, c *github.Client, owner, repo string, workflowFilename string) ([]*github.WorkflowRun, error) {
 	runs, _, err := c.Actions.ListWorkflowRunsByFileName(ctx, owner, repo, workflowFilename, &github.ListWorkflowRunsOptions{
 		Event: "push",
 	})
 	return runs.WorkflowRuns, err
 }
 
-// githubListLanguages uses the GitHub API to list languages.
+// listLanguagesReal uses the GitHub API to list languages.
 // Docs: https://docs.github.com/en/rest/repos/repos#list-repository-languages
-func githubListLanguages(ctx context.Context, c *github.Client, owner, repo string) (map[string]int, error) {
+func listLanguagesReal(ctx context.Context, c *github.Client, owner, repo string) (map[string]int, error) {
 	l, _, err := c.Repositories.ListLanguages(ctx, owner, repo)
 	return l, err
 }
 
-// githubListWorkflows returns workflows for a repo. If on is specified, will
+// listWorkflowsReal returns workflows for a repo. If on is specified, will
 // filter to workflows with all trigger events listed in on.
 // Docs: https://docs.github.com/en/rest/repos/contents#get-repository-content
-func githubListWorkflows(ctx context.Context, c *github.Client, owner, repo string) ([]*workflowMetadata, error) {
+func listWorkflowsReal(ctx context.Context, c *github.Client, owner, repo string) ([]*workflowMetadata, error) {
 	_, workflowDirContents, resp, err := c.Repositories.GetContents(ctx, owner, repo, ".github/workflows", &github.RepositoryContentGetOptions{})
 	if err != nil {
 		if resp.StatusCode == 404 {
@@ -746,9 +746,9 @@ func githubListWorkflows(ctx context.Context, c *github.Client, owner, repo stri
 	return workflows, nil
 }
 
-// githubListReleases uses the GitHub API to list releases for a repo.
+// listReleasesReal uses the GitHub API to list releases for a repo.
 // Docs: https://docs.github.com/en/rest/releases/releases#list-releases
-func githubListReleases(ctx context.Context, c *github.Client, owner, repo string) ([]*github.RepositoryRelease, error) {
+func listReleasesReal(ctx context.Context, c *github.Client, owner, repo string) ([]*github.RepositoryRelease, error) {
 	releases, _, err := c.Repositories.ListReleases(ctx, owner, repo, &github.ListOptions{})
 	if err != nil {
 		return nil, err
