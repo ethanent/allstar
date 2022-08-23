@@ -138,6 +138,7 @@ type actionMetadata struct {
 	version          string
 	workflowFilename string
 	workflowName     string
+	workflowOn       []actionlint.Event
 }
 
 // internalRuleGroup is a RuleGroup using internalRule
@@ -164,7 +165,7 @@ type internalRule struct {
 
 var configFetchConfig func(context.Context, *github.Client, string, string, string, config.ConfigLevel, interface{}) error
 
-var listWorkflows func(ctx context.Context, c *github.Client, owner, repo string, on []string) ([]*workflowMetadata, error)
+var listWorkflows func(ctx context.Context, c *github.Client, owner, repo string) ([]*workflowMetadata, error)
 var listLanguages func(ctx context.Context, c *github.Client, owner, repo string) (map[string]int, error)
 var listWorkflowRunsByFilename func(ctx context.Context, c *github.Client, owner, repo string, workflowFilename string) ([]*github.WorkflowRun, error)
 var getLatestCommitHash func(ctx context.Context, c *github.Client, owner, repo string) (string, error)
@@ -220,7 +221,7 @@ func (a Action) Check(ctx context.Context, c *github.Client, owner,
 	// Get workflows.
 	// Workflows should have push and pull_request listed as trigger events
 	// in order to qualify.
-	wfs, err := listWorkflows(ctx, c, owner, repo, []string{"push", "pull_request"})
+	wfs, err := listWorkflows(ctx, c, owner, repo)
 	if err != nil {
 		return nil, err
 	}
@@ -269,6 +270,7 @@ func (a Action) Check(ctx context.Context, c *github.Client, owner,
 					version:          version,
 					workflowFilename: wf.filename,
 					workflowName:     wf.workflow.Name.Value,
+					workflowOn:       wf.workflow.On,
 				})
 			}
 		}
@@ -291,12 +293,13 @@ func (a Action) Check(ctx context.Context, c *github.Client, owner,
 			match, err := rs.match(ctx, c, owner, repo, repoSelectorExcludeDepthLimit, gc, sc)
 
 			if err != nil {
-				log.Warn().
+				log.Info().
 					Str("org", owner).
 					Str("repo", repo).
 					Str("area", polName).
 					Err(err).
-					Msg("Skipping rule with invalid RepoSelector")
+					Msg("Invalid RepoSelector, will skip.")
+				continue
 			}
 
 			if match {
@@ -668,7 +671,7 @@ func githubListLanguages(ctx context.Context, c *github.Client, owner, repo stri
 // githubListWorkflows returns workflows for a repo. If on is specified, will
 // filter to workflows with all trigger events listed in on.
 // Docs: https://docs.github.com/en/rest/repos/contents#get-repository-content
-func githubListWorkflows(ctx context.Context, c *github.Client, owner, repo string, on []string) ([]*workflowMetadata, error) {
+func githubListWorkflows(ctx context.Context, c *github.Client, owner, repo string) ([]*workflowMetadata, error) {
 	_, workflowDirContents, resp, err := c.Repositories.GetContents(ctx, owner, repo, ".github/workflows", &github.RepositoryContentGetOptions{})
 	if err != nil {
 		if resp.StatusCode == 404 {
@@ -734,32 +737,6 @@ func githubListWorkflows(ctx context.Context, c *github.Client, owner, repo stri
 		}
 		if wf == nil {
 			continue
-		}
-		// Filter if required trigger events specified
-		if on != nil {
-			allowByOnFilter := true
-			for _, o := range on {
-				contains := false
-				for _, oa := range wf.On {
-					if o == oa.EventName() {
-						contains = true
-					}
-				}
-				if !contains {
-					allowByOnFilter = false
-					break
-				}
-			}
-			if !allowByOnFilter {
-				log.Info().
-					Str("org", owner).
-					Str("repo", repo).
-					Str("area", polName).
-					Str("path", wfc.GetPath()).
-					Strs("on", on).
-					Msg("Skipping workflow due to missing on trigger(s).")
-				continue
-			}
 		}
 		workflows = append(workflows, &workflowMetadata{
 			filename: wfc.GetName(),

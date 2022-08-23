@@ -850,6 +850,36 @@ func TestCheck(t *testing.T) {
 			},
 			ExpectPass: false,
 		},
+		{
+			Name: "Required Action present in workflow without correct \"on\" values",
+			Org: OrgConfig{
+				Action: "issue",
+				Groups: []*RuleGroup{
+					{
+						Rules: []*Rule{
+							{
+								Name:   "Require ossf/required-action",
+								Method: "require",
+								Actions: []*ActionSelector{
+									{
+										Name: "ossf/required-action",
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+			Workflows: []testingWorkflowMetadata{
+				{
+					File: "no-on.yaml",
+				},
+			},
+			ExpectPass: false,
+			ExpectMessage: []string{
+				`Enable workflow "Test Workflow 2" containing Action "oss* to run on pull_request and push.`,
+			},
+		},
 	}
 
 	a := NewAction()
@@ -867,8 +897,8 @@ func TestCheck(t *testing.T) {
 				return nil
 			}
 
-			listWorkflows = func(ctx context.Context, c *github.Client, owner, repo string,
-				on []string) ([]*workflowMetadata, error) {
+			listWorkflows = func(ctx context.Context, c *github.Client, owner, repo string) (
+				[]*workflowMetadata, error) {
 				var wfs []*workflowMetadata
 				for _, w := range test.Workflows {
 					d, err := ioutil.ReadFile(filepath.Join("test_workflows", w.File))
@@ -878,7 +908,7 @@ func TestCheck(t *testing.T) {
 					workflow, errs := actionlint.Parse(d)
 					if len(errs) > 0 {
 						for _, er := range errs {
-							t.Logf("parse err: %s", er.Error())
+							t.Logf("parse err on %s: %s", w.File, er.Error())
 						}
 					}
 					if workflow == nil {

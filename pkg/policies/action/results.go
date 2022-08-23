@@ -138,11 +138,14 @@ const (
 	requireRuleEvaluationFixMethodAdd requireRuleEvaluationFixMethod = iota
 	requireRuleEvaluationFixMethodFix
 	requireRuleEvaluationFixMethodUpdate
+	requireRuleEvaluationFixMethodEnable
 )
 
 // requireRuleEvaluationFix represents a fix option for a require rule evaluation
 type requireRuleEvaluationFix struct {
 	fixMethod requireRuleEvaluationFixMethod
+
+	workflowName string
 
 	actionName string
 
@@ -183,6 +186,8 @@ func (rf *requireRuleEvaluationFix) string() string {
 		return fmt.Sprintf("Fix failing Action \"%s\"", rf.actionName)
 	case requireRuleEvaluationFixMethodUpdate:
 		return fmt.Sprintf("Update Action \"%s\" to version satisfying \"%s\"", rf.actionName, rf.actionVersionConstraint)
+	case requireRuleEvaluationFixMethodEnable:
+		return fmt.Sprintf("Enable workflow \"%s\" containing Action \"%s\" to run on %v.", rf.workflowName, rf.actionName, strings.Join(requireWorkflowOnForRequire, " and "))
 	default:
 		return "unknown require rule eval fix"
 	}

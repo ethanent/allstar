@@ -17,9 +17,10 @@ package action
 import (
 	"context"
 	"fmt"
-
 	"github.com/google/go-github/v43/github"
 )
+
+var requireWorkflowOnForRequire = []string{"pull_request", "push"}
 
 // evaluateActionDenied evaluates an Action against a set of Rules
 func evaluateActionDenied(ctx context.Context, c *github.Client, rules []*internalRule, action *actionMetadata, gc globCache, sc semverCache) (*denyRuleEvaluationResult, []error) {
@@ -149,6 +150,27 @@ func evaluateRequireRule(ctx context.Context, c *github.Client, owner, repo stri
 				}
 				// Name mismatch, keep looking
 				continue
+			}
+
+			on := map[string]struct{}{}
+			for _, o := range a.workflowOn {
+				on[o.EventName()] = struct{}{}
+			}
+			hasRequired := true
+			for _, requireOn := range requireWorkflowOnForRequire {
+				if _, ok := on[requireOn]; !ok {
+					hasRequired = false
+				}
+			}
+			if !hasRequired {
+				// Workflow does not have required "on" values
+				suggestedFix = &requireRuleEvaluationFix{
+					fixMethod:               requireRuleEvaluationFixMethodEnable,
+					actionName:              a.name,
+					actionVersionConstraint: ra.Version,
+					workflowName:            a.workflowName,
+				}
+				break
 			}
 
 			// Check if passing (if the Action is required to be)
