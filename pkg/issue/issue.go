@@ -151,6 +151,7 @@ func ensure(ctx context.Context, c *github.Client, issues issues, owner, repo, p
 				Str("org", owner).
 				Str("repo", repo).
 				Str("area", policy).
+				Int("issueNumber", issue.GetNumber()).
 				Msg("Unexpectedly failed to update issue update section.")
 			return nil
 		}
@@ -161,7 +162,7 @@ func ensure(ctx context.Context, c *github.Client, issues issues, owner, repo, p
 			Body:  &newBody,
 		})
 		if err != nil {
-			return fmt.Errorf("while updating issue: editing body: %w", err)
+			return fmt.Errorf("while updating issue %d: editing body: %w", issue.GetNumber(), err)
 		}
 		return nil
 	} else {
@@ -198,7 +199,7 @@ func ensure(ctx context.Context, c *github.Client, issues issues, owner, repo, p
 		return err
 	}
 	if issue.GetUpdatedAt().Before(time.Now().Add(-1 * operator.NoticePingDuration)) {
-		body := "Updating issue after ping interval. Status:\n" + text
+		body := fmt.Sprintf("Updating issue after ping interval. See its status below.\n\n---\n\n%s", text)
 		comment := &github.IssueComment{
 			Body: &body,
 		}
