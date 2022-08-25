@@ -266,7 +266,7 @@ func (a Action) Check(ctx context.Context, c *github.Client, owner,
 				sm := actionNameVersionRegex.FindStringSubmatch(actionStep.Uses.Value)
 				if sm == nil {
 					// Ignore invalid Action
-					log.Info().
+					log.Warn().
 						Str("org", owner).
 						Str("repo", repo).
 						Str("area", polName).
@@ -304,7 +304,7 @@ func (a Action) Check(ctx context.Context, c *github.Client, owner,
 			match, err := rs.match(ctx, c, owner, repo, repoSelectorExcludeDepthLimit, gc, sc)
 
 			if err != nil {
-				log.Info().
+				log.Warn().
 					Str("org", owner).
 					Str("repo", repo).
 					Str("area", polName).
